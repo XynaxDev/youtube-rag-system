@@ -2,5 +2,5 @@
 /.vscode
 /.env
 /yt.html
-/test.py
+/test*
 /ytsummariser.py
