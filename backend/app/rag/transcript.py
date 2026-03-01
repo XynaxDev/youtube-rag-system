@@ -3,7 +3,6 @@ Transcript extraction, video metadata fetching, and document chunking.
 Extracted from singleVideo.py / multiVideo.py.
 """
 
-import os
 import re
 import math
 import logging
