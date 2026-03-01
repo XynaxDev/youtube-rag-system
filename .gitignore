@@ -1,7 +1,37 @@
-/cache
-/.vscode
-/.env
+# ─── Environment ──────────────────────
+.env
+backend/.env
+
+# ─── Python ───────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ─── Node ─────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+clipiq/node_modules/
+
+# ─── Ollama / ChromaDB ───────────────
+chroma_db/
+*.sqlite3
+
+# ─── IDE ──────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── OS ───────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Legacy / test files ─────────────
 /yt.html
 /test*
 /ytsummariser.py
-/__pycache__
+/cache
