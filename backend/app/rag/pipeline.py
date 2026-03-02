@@ -60,15 +60,15 @@ def get_intent(
     query: str, history: ChatMessageHistory, multi_mode: bool = False
 ) -> str:
     recent_history = "\n".join(
-        [f"{m.type}: {m.content}" for m in history.messages[-4:]]
+        [f"{m.type}: {m.content}" for m in history.messages[-2:]]
     )
 
     router_class = MultiRouter if multi_mode else Router
     parser = PydanticOutputParser(pydantic_object=router_class)
 
     router_instruction = """
-    You are an expert query router. Based on the conversation history and the new request,
-    determine the user's intent.
+    You are an expert query router. Based on the conversation history and the new user request,
+    determine if the user wants a broad overview (SUMMARY) or a specific detail/follow-up (RAG).
 
     CONVERSATION HISTORY:
     {history}
@@ -77,9 +77,9 @@ def get_intent(
     {query}
 
     Rules:
-    - If the request is a follow-up or asks for specific details, pick RAG.
+    - If the request is a follow-up to a previous specific point or asks for specific details, pick RAG.
     - If the request is a greeting like "hi" or "hello", pick RAG.
-    - If the request asks for a general overview, pick SUMMARY.
+    - If the request asks for a general overview of the whole video, pick SUMMARY.
     - If comparing two videos, pick COMPARE.
     - If asking to summarize both videos, pick DUAL_SUMMARY.
 
@@ -104,11 +104,30 @@ def get_intent(
 # ─── RAG Prompt ──────────────────────────────────────────────
 RAG_PROMPT = PromptTemplate(
     template="""
-    You are a helpful YouTube AI assistant. 
-    PRIMARY TASK(STRICTLY FOLLOW):
-    - Your primary goal is to answer the [USER QUESTION] provided below.
-    - Use the [CHAT HISTORY] ONLY for context (e.g., if the user refers to a previous point). 
-    - DO NOT answer OLD questions from the chat history and do not greet again and again.
+    You are an elite YouTube analyst. 
+    
+    CRITICAL INSTRUCTIONS:
+    1. GREETINGS:
+       - If the user says "hi", "hello", "yo", or any greeting, reply naturally: "Hi there! I'm ready to help you with: {video_summary}. What would you like to know?"
+       - (STRICT MANDATE): DO NOT INCLUDE ANY TIMESTAMP, SOURCE LINK, OR BRACKETS FOR GREETINGS. 
+
+    2. FACTUAL ANSWERS:
+       - Answer using ONLY the [VIDEO CONTENT].
+       - (STRICT MANDATE): Append the timestamp link on the SAME LINE as your last sentence.
+       - Format: [https://youtu.be/{video_id}?t={seconds}s]
+       - DO NOT use the word "Source:". 
+
+    3. UNKNOWN INFORMATION:
+       - If not in video, say: "That isn't discussed here. This video focuses on {video_summary}."
+       - (STRICT MANDATE): NO TIMESTAMPS if info is not found.
+
+    4. SCOPE GUARD:
+       - Stay strictly inside the video transcript context.
+       - If the user asks about software/code/project logs, files, commands, or chat system behavior, treat it as out-of-scope unless that topic is explicitly present in VIDEO CONTENT.
+       - For any out-of-scope request, reply exactly with the UNKNOWN INFORMATION response above.
+
+    5. NO TECHNICAL JARGON.
+    6. If the new user question differs from earlier messages, do not repeat previous answer text.
 
     VIDEO CONTENT:
     {context}
@@ -118,33 +137,6 @@ RAG_PROMPT = PromptTemplate(
 
     USER QUESTION: 
     {question}
-
-    INSTRUCTIONS:
-    1. GENERAL CONVERSATION & GREETINGS:
-       - Reply naturally and warmly.
-       - Acknowledge that you are here to help with the video. You can mention that the video is about: {video_summary}
-       - DO NOT include Source Links for general chat.
-    
-    2. TIMESTAMP QUERIES:
-       - If the user asks about a specific time (e.g., "at 54:00"), use the closest available segments in the [VIDEO CONTENT].
-       - Answer based on that content naturally. Simply state what is being discussed in that portion of the video.
-       
-    3. VIDEO QUESTIONS (INFORMATION FOUND):
-       - Answer using ONLY the [VIDEO CONTENT] provided.
-       - (CRITICAL) You MUST always append the source link at the end of your response,\nSource: https://youtu.be/{video_id}?t={seconds}s
-       - Use the 'seconds' variable provided to you for the link.
-
-    4. VIDEO QUESTIONS (INFORMATION NOT FOUND):
-       - If the user asks about something not in the video, politely explain that it's not covered. 
-       - Briefly mention the general theme of the video ({video_summary}) to be helpful and invite related questions.
-       - DO NOT provide a source link if the answer is not found.
-    
-    5. PERSONAL OPINIONS (NOT GENERAL QUESTIONS):
-       - If the user asks for YOUR personal view or opinion, start by saying: "As an AI assistant, I don't have personal opinions. However, based on the video content..." and then proceed to answer using the transcript content.
-
-    6. FORMATTING:
-       - Keep responses conversational, helpful, and grounded.
-       - Respond in the same language as the [USER QUESTION].
     """,
     input_variables=[
         "context",
@@ -242,6 +234,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
     metadata = processed["metadata"]
     chunks = processed["chunks"]
     vectorstore = processed["vectorstore"]
+    video_focus = metadata.get("title", "this video")
 
     if not chunks or vectorstore is None:
         return {
@@ -250,8 +243,14 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
             "sources": [],
         }
 
+    if _looks_like_dev_log_or_code_query(message):
+        guarded = f"That isn't discussed here. This video focuses on {video_focus}."
+        history.add_user_message(message)
+        history.add_ai_message(guarded)
+        return {"response": guarded, "intent": "RAG", "sources": []}
+
     # Determine intent
-    intent = get_intent(message, history)
+    intent = _intent_from_keywords(message) or get_intent(message, history)
     logger.info("Detected intent: %s", intent)
 
     if intent == "SUMMARY":
@@ -279,6 +278,12 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
 
     # Filter and format
     good_docs = [d for d in retrieved_docs if not is_low_quality_text(d.page_content)]
+    if not good_docs:
+        guarded = f"That isn't discussed here. This video focuses on {video_focus}."
+        history.add_user_message(message)
+        history.add_ai_message(guarded)
+        return {"response": guarded, "intent": "RAG", "sources": []}
+
     context_text = "\n\n".join(
         [f"[{d.metadata['start']}s]: {d.page_content}" for d in good_docs]
     )
@@ -428,14 +433,18 @@ def _get_universal_summary(chunks, metadata) -> str:
 
     title = metadata.get("title", "this video")
     res = open_router_model.invoke(f"""
-        Summarize this YouTube video professionally.
-        Video Title: {title}
+    You are an elite executive intelligence analyst. 
+    Video Title: {title}
 
-        Provide a concise 4-5 sentence overview followed by key takeaways in bullet points
-        and mention all the key topics covered in the video.
-        Don't include the youtube source link in the summary.
+    STRICT FORMATTING RULES:
+    1. Start with exactly "Summary: " followed by a high-level, 4-5 sentence professional overview of the video's core mission and content.
+    2. Follow with exactly "Key Takeaways: " followed by a bulleted list (using '*' for bullets) of the most important specific insights.
+    3. DO NOT use technical jargon like "transcript" or "chunks".
+    4. DO NOT include any source links or timestamps in this summary.
+    5. Keep the language sophisticated yet direct.
 
-        VIDEO CONTENT:
-        {final_text}
+    VIDEO CONTENT:
+    {final_text}
+    
     """)
     return res.content

@@ -11,8 +11,8 @@ function ProcessingTerminal({ status }: { status: string }) {
   const steps = [
     { text: "Initializing RAG pipeline...", color: "text-blue-400" },
     { text: "Fetching transcript fragments...", color: "text-gray-300" },
-    { text: "Cleaning garbled captions...", done: true },
-    { text: "Generating semantic embeddings...", done: true },
+    { text: "Cleaning garbled captions...", color: "text-gray-400" },
+    { text: "Generating semantic embeddings...", color: "text-gray-400" },
     { text: "Extracting key insights...", color: "text-blue-400" },
     { text: "Finalizing analysis...", color: "text-green-400" },
   ];
@@ -47,18 +47,19 @@ function ProcessingTerminal({ status }: { status: string }) {
             animate={{
               opacity: step >= i ? 1 : 0.2,
               x: step >= i ? 0 : -10,
-              filter: step > i ? "grayscale(0.5) opacity(0.5)" : "none"
+              filter: step > i && step < steps.length ? "grayscale(0.5) opacity(0.5)" : "none"
             }}
             className="flex gap-4 items-start"
           >
             <span className="text-blue-500 shrink-0">❯</span>
-            <span className={cn(s.color || "text-gray-300", s.done && step > i && "text-green-400", "flex items-center gap-2")}>
+            <span className={cn(s.color || "text-gray-300", step > i && "text-green-400", "flex items-center gap-2")}>
               {s.text}
               {step === i && <Loader2 className="w-3 h-3 animate-spin text-blue-400" />}
-              {s.done && step > i && <span className="text-[10px] font-bold opacity-60 px-1.5 py-0.5 bg-green-500/10 rounded uppercase">Done</span>}
+              {step > i && <span className="text-[10px] font-bold opacity-60 px-1.5 py-0.5 bg-green-500/10 rounded uppercase">Done</span>}
             </span>
           </motion.div>
         ))}
+
       </div>
     </motion.div>
   );
@@ -121,98 +122,113 @@ export function Summarize() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#050505] selection:bg-blue-500/30 overflow-hidden relative">
+    <div className="w-full bg-[#050505] selection:bg-blue-500/30 relative pb-[72px] overflow-x-hidden">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/5 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-600/5 blur-[120px] pointer-events-none" />
 
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="w-full max-w-4xl text-center space-y-10 relative z-10"
-      >
-        {!isAnalyzing ? (
-          <>
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-widest mx-auto">
-              <Sparkles className="w-3.5 h-3.5" />
-              ClipIQ Neural Engine v2.0
-            </div>
+      <div className="flex flex-col items-center lg:justify-center p-4 md:p-6 lg:p-10 pt-4 md:pt-6">
 
-            <div className="space-y-6">
-              <h1 className="text-6xl md:text-8xl font-bold tracking-tight font-display leading-[0.9] mb-4">
-                Analyze <br />
-                <span className="font-serif italic text-blue-500">any video.</span>
-              </h1>
-              <p className="text-gray-500 text-lg md:text-xl max-w-xl mx-auto font-sans leading-relaxed">
-                Unlock the knowledge hidden in hours of video content. Get instant summaries, citations, and interactive answers.
-              </p>
-            </div>
-
-            <form onSubmit={handleSummarize} className="relative max-w-3xl mx-auto mt-16 group">
-              <div className="relative flex items-center bg-[#0a0a0a] border border-white/10 rounded-[2rem] p-3 focus-within:border-blue-500/40 transition-all shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)]">
-                <div className="pl-6 pr-4 text-gray-600 group-focus-within:text-blue-500 transition-colors">
-                  <Link2 className="w-6 h-6" />
-                </div>
-                <input
-                  type="url"
-                  placeholder="Paste any YouTube URL..."
-                  className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-gray-800 h-16 text-xl font-medium"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  disabled={isAnalyzing}
-                  required
-                />
-                <button
-                  type="submit"
-                  disabled={!url || isAnalyzing}
-                  className={cn(
-                    "ml-3 px-10 py-5 rounded-[1.25rem] font-bold text-sm tracking-widest uppercase transition-all",
-                    url && !isAnalyzing
-                      ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
-                      : "bg-white/5 text-gray-700 cursor-not-allowed"
-                  )}
-                >
-                  Generate
-                </button>
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="w-full max-w-4xl text-center space-y-8 md:space-y-10 relative z-10"
+        >
+          {!isAnalyzing ? (
+            <>
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-bold uppercase tracking-widest mx-auto">
+                <Sparkles className="w-3.5 h-3.5" />
+                ClipIQ Intelligence Engine v2.0
               </div>
-            </form>
 
-            <div className="flex flex-wrap items-center justify-center gap-4 mt-12 opacity-40 hover:opacity-100 transition-opacity">
-              <span className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Supported:</span>
-              {["Podcasts", "Lectures", "Tech Tutorials", "Documentaries"].map(t => (
-                <span key={t} className="px-3 py-1 bg-white/5 border border-white/5 rounded-full text-[10px] text-gray-500 capitalize">{t}</span>
-              ))}
+              <div className="space-y-4 md:space-y-6">
+                <h1 className="text-4xl md:text-8xl font-bold tracking-tight font-serif italic leading-[1.1] md:leading-[0.9] mb-4 text-white">
+                  Analyze <br />
+                  <span className="text-blue-500">any video.</span>
+                </h1>
+                <p className="text-gray-500 text-sm md:text-xl max-w-xl mx-auto font-sans leading-relaxed px-6 md:px-0">
+                  Unlock the knowledge hidden in hours of video content. Get instant summaries, citations, and interactive answers.
+                </p>
+              </div>
+
+              <form onSubmit={handleSummarize} className="relative max-w-2xl mx-auto mt-8 md:mt-12 group px-4 md:px-0">
+                <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center bg-[#0a0a0a] border border-white/10 rounded-[1.25rem] sm:rounded-[1.5rem] p-2 focus-within:border-blue-500/40 transition-all shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] gap-2 sm:gap-0">
+                  <div className="flex items-center flex-1 px-2">
+                    <div className="pl-3 pr-3 text-gray-600 group-focus-within:text-blue-500 transition-colors shrink-0">
+                      <Link2 className="w-5 h-5" />
+                    </div>
+                    <input
+                      type="url"
+                      placeholder="Paste YouTube URL..."
+                      className="flex-1 bg-transparent border-none outline-none text-white placeholder:text-gray-800 h-10 md:h-12 text-base md:text-lg font-medium w-full"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      disabled={isAnalyzing}
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={!url || isAnalyzing}
+                    className={cn(
+                      "sm:ml-2 px-6 h-10 md:h-12 md:px-8 md:py-3.5 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap",
+                      url && !isAnalyzing
+                        ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
+                        : "bg-white/5 text-gray-700 cursor-not-allowed"
+                    )}
+                  >
+                    Generate
+                  </button>
+                </div>
+              </form>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-12 max-w-3xl mx-auto">
+                {[
+                  { label: "Podcasts", desc: "Long-form insights" },
+                  { label: "Lectures", desc: "Key academic points" },
+                  { label: "Tech Tutorials", desc: "Step-by-step logic" },
+                  { label: "Documentaries", desc: "Narrative summaries" }
+                ].map(t => (
+                  <div
+                    key={t.label}
+                    className="p-4 bg-[#0a0a0a] border border-white/5 rounded-2xl text-left hover:border-blue-500/30 transition-all cursor-default group"
+                  >
+                    <div className="text-[11px] font-bold text-white uppercase tracking-wider mb-1 group-hover:text-blue-400 transition-colors">{t.label}</div>
+                    <div className="text-[10px] text-gray-600 font-medium">{t.desc}</div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="space-y-12 py-10">
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="space-y-4"
+              >
+                <h2 className="text-3xl md:text-5xl font-bold font-serif italic tracking-tight">Hang tight, analyzing...</h2>
+                <p className="text-gray-500 text-xs md:text-sm max-w-sm mx-auto px-4">Our temporal engine is scanning fragments to build a semantic map of the video.</p>
+              </motion.div>
+              <ProcessingTerminal status={status} />
             </div>
-          </>
-        ) : (
-          <div className="space-y-12 py-10">
+          )}
+
+          {error && (
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="space-y-4"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex items-center justify-center gap-3 text-sm text-red-400 bg-red-500/5 border border-red-500/10 rounded-2xl px-6 py-4 max-w-2xl mx-auto shadow-2xl"
             >
-              <h2 className="text-4xl font-bold font-display tracking-tight">Hang tight, analyzing...</h2>
-              <p className="text-gray-500 max-w-sm mx-auto">Our temporal engine is scanning fragments to build a semantic map of the video.</p>
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              {error}
             </motion.div>
-            <ProcessingTerminal status={status} />
-          </div>
-        )}
+          )}
 
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center justify-center gap-3 text-sm text-red-400 bg-red-500/5 border border-red-500/10 rounded-2xl px-6 py-4 max-w-2xl mx-auto shadow-2xl"
-          >
-            <AlertCircle className="w-5 h-5 shrink-0" />
-            {error}
-          </motion.div>
-        )}
-
-        <p className="text-[10px] text-gray-700 mt-20 font-bold uppercase tracking-widest opacity-30">
-          ClipIQ Neural Engine • Verified Reasoning
-        </p>
-      </motion.div>
+          <p className="text-[10px] text-gray-700 mt-20 font-bold uppercase tracking-widest opacity-30">
+            ClipIQ Intelligence System • Verified Reasoning
+          </p>
+        </motion.div>
+      </div>
     </div>
   );
 }

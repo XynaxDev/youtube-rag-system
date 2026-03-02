@@ -48,6 +48,7 @@ async function apiFetch<T>(endpoint: string, body: Record<string, unknown>): Pro
   const res = await fetch(`${API_BASE}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    cache: "no-store",
     body: JSON.stringify(body),
   });
 

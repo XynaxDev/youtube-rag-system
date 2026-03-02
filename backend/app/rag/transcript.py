@@ -24,20 +24,41 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_LANGS = [
     "en",
+    "en-US",
+    "en-GB",
+    "en-IN",
+    "en-CA",
+    "en-AU",
     "hi",
+    "hi-IN",
     "es",
+    "es-ES",
+    "es-MX",
     "fr",
+    "fr-FR",
     "de",
+    "de-DE",
     "zh-Hans",
     "zh-Hant",
+    "zh-CN",
+    "zh-TW",
     "ja",
+    "ja-JP",
     "ko",
+    "ko-KR",
     "ru",
+    "ru-RU",
     "pt",
+    "pt-BR",
+    "pt-PT",
     "it",
+    "it-IT",
     "ar",
+    "ar-SA",
     "tr",
+    "tr-TR",
     "vi",
+    "vi-VN",
 ]
 
 
@@ -96,19 +117,55 @@ def fetch_video_metadata(video_id: str) -> Dict[str, str]:
 
 
 def fetch_transcript_fragments(video_id: str):
-    """Fetch transcript fragments from YouTube."""
+    """Fetch transcript fragments from YouTube with sophisticated multi-language fallback."""
     api = YouTubeTranscriptApi()
     try:
+        # 1. Try our expanded list of prioritized regional codes
+        logger.info("Attempting prioritized transcript fetch for %s", video_id)
         return api.fetch(video_id, languages=SUPPORTED_LANGS)
-    except TranscriptsDisabled:
-        logger.warning("Transcripts disabled for %s", video_id)
-        return []
-    except NoTranscriptFound:
-        logger.warning("No transcript for %s", video_id)
-        return []
     except Exception as e:
-        logger.exception("Error fetching transcript: %s", e)
-        return []
+        logger.info(
+            "Prioritized fetch failed for %s: %s. Attempting broad fallback...",
+            video_id,
+            e,
+        )
+        try:
+            # 2. Get the full list of transcripts to inspect
+            transcript_list = api.list(video_id)
+
+            # 3. Try specifically for anything English-related if not found in step 1
+            try:
+                # find_transcript handles the fallback for us if we give it the right hints
+                # but we can also manually filter if we want to be safe
+                en_transcripts = [
+                    t for t in transcript_list if t.language_code.startswith("en")
+                ]
+                if en_transcripts:
+                    # Pick the first one (manual usually comes first in transcript_list iteration)
+                    return en_transcripts[0].fetch()
+            except Exception:
+                pass
+
+            # 4. Final resort: fetch the absolute first available transcript regardless of language
+            # We iterate over the list object itself
+            for t in transcript_list:
+                logger.info(
+                    "Last resort: fetching first available transcript (%s) for %s",
+                    t.language_code,
+                    video_id,
+                )
+                return t.fetch()
+
+        except TranscriptsDisabled:
+            logger.warning("Transcripts explicitly disabled for %s", video_id)
+        except NoTranscriptFound:
+            logger.warning("No transcript records found for %s", video_id)
+        except Exception as inner_e:
+            logger.exception(
+                "Catastrophic failure fetching transcript for %s: %s", video_id, inner_e
+            )
+
+    return []
 
 
 def ingest_video_to_chunks(video_id: str) -> Tuple[List[Document], int]:

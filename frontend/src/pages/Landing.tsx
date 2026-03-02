@@ -251,10 +251,10 @@ export function Landing() {
             <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center shadow-lg group-hover:rotate-12 transition-transform">
               <PlaySquare className="w-5 h-5 text-white" />
             </div>
-            <span className="font-bold text-lg tracking-tight font-display hidden sm:block">ClipIQ</span>
+            <span className="font-bold text-base sm:text-lg tracking-tight font-display">ClipIQ</span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="hidden sm:flex items-center gap-1">
             {[
               { href: "#features", label: "Features" },
               { href: "#how-it-works", label: "How It Works" },
@@ -268,7 +268,7 @@ export function Landing() {
             <a href="https://github.com/XynaxDev" target="_blank" rel="noreferrer" className="text-gray-400 hover:text-white transition-all hover:scale-110">
               <Github className="w-5 h-5" />
             </a>
-            <Link to="/dashboard" className="bg-white text-black hover:bg-gray-100 text-[11px] font-bold uppercase tracking-widest px-5 py-2 rounded-full transition-all hover:shadow-[0_0_20px_rgba(255,255,255,0.2)]">
+            <Link to="/dashboard" className="hidden sm:inline-flex bg-white text-black hover:bg-gray-100 text-[11px] font-bold uppercase tracking-widest px-5 py-2 rounded-full transition-all hover:shadow-[0_0_20px_rgba(255,255,255,0.2)]">
               Launch App
             </Link>
           </div>
@@ -640,31 +640,39 @@ export function Landing() {
               The next generation of video intelligence for researchers, students, and engineers.
             </p>
             <div className="flex gap-4">
-              <Tooltip text="X (Twitter)">
-                <a href="https://x.com/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                  <Twitter className="w-5 h-5" />
-                </a>
-              </Tooltip>
+              <div className="hidden sm:block">
+                <Tooltip text="X (Twitter)">
+                  <a href="https://x.com/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
+                    <Twitter className="w-5 h-5" />
+                  </a>
+                </Tooltip>
+              </div>
               <Tooltip text="GitHub">
                 <a href="https://github.com/XynaxDev" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
                   <Github className="w-5 h-5" />
                 </a>
               </Tooltip>
-              <Tooltip text="LinkedIn">
-                <a href="https://linkedin.com/in/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                  <Linkedin className="w-5 h-5" />
-                </a>
-              </Tooltip>
-              <Tooltip text="Instagram">
-                <a href="https://instagram.com/xynaxhere" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                  <Instagram className="w-5 h-5" />
-                </a>
-              </Tooltip>
-              <Tooltip text="Email Me">
-                <a href="mailto:akashkumar.cs27@gmail.com" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                  <Mail className="w-5 h-5" />
-                </a>
-              </Tooltip>
+              <div className="hidden sm:block">
+                <Tooltip text="LinkedIn">
+                  <a href="https://linkedin.com/in/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
+                    <Linkedin className="w-5 h-5" />
+                  </a>
+                </Tooltip>
+              </div>
+              <div className="hidden sm:block">
+                <Tooltip text="Instagram">
+                  <a href="https://instagram.com/xynaxhere" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
+                    <Instagram className="w-5 h-5" />
+                  </a>
+                </Tooltip>
+              </div>
+              <div className="hidden sm:block">
+                <Tooltip text="Email Me">
+                  <a href="mailto:akashkumar.cs27@gmail.com" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
+                    <Mail className="w-5 h-5" />
+                  </a>
+                </Tooltip>
+              </div>
             </div>
           </div>
 

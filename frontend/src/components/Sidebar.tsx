@@ -175,7 +175,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: {
         </div>
       </div>
 
-      <div className="p-4 border-t border-white/5">
+      <div className="p-4">
         <a
           href="https://github.com/akashkumar"
           target="_blank"

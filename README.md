@@ -57,7 +57,7 @@ YoutubeRAGSystem/
 ### 1. Clone & configure
 
 ```bash
-git clone https://github.com/your-username/YoutubeRAGSystem.git
+git clone https://github.com/XynaxDev/youtube-rag-system.git
 cd YoutubeRAGSystem
 cp .env.example backend/.env
 # Edit backend/.env with your API keys
