@@ -50,6 +50,7 @@ class ChatResponse(BaseModel):
 class SummaryResponse(BaseModel):
     summary: str
     video_info: Dict[str, str]
+    starter_questions: List[str] = []
 
 
 class CompareResponse(BaseModel):

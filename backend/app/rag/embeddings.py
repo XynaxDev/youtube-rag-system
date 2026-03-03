@@ -41,20 +41,46 @@ class SafeOllamaEmbeddings(OllamaEmbeddings):
                 sanitized.append(0.0)
         return sanitized
 
+    def _sanitize_text(self, text: str) -> str:
+        if not text:
+            return ""
+        normalized = unicodedata.normalize("NFKC", text)
+        normalized = "".join(
+            ch for ch in normalized if unicodedata.category(ch)[0] != "C"
+        )
+        normalized = " ".join(normalized.split())
+        # Keep payload bounded for embedding service stability.
+        if len(normalized) > 4000:
+            normalized = normalized[:4000]
+        return normalized
+
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        raw = super().embed_documents(texts)
+        cleaned = [self._sanitize_text(t) for t in texts]
+        raw = super().embed_documents(cleaned)
         return [self._sanitize_vector(v) for v in raw]
 
     def embed_query(self, text: str) -> List[float]:
         last_exception = None
-        for attempt in range(2):
-            try:
-                raw = super().embed_query(text)
-                return self._sanitize_vector(raw)
-            except Exception as e:
-                last_exception = e
-                logger.debug("embed_query attempt %d failed: %s", attempt + 1, e)
-                time.sleep(0.2 * (attempt + 1))
+        cleaned = self._sanitize_text(text)
+        variants = [cleaned]
+        ascii_variant = cleaned.encode("ascii", errors="ignore").decode("ascii").strip()
+        if ascii_variant and ascii_variant != cleaned:
+            variants.append(ascii_variant)
+
+        for variant in variants:
+            for attempt in range(2):
+                try:
+                    raw = super().embed_query(variant)
+                    return self._sanitize_vector(raw)
+                except Exception as e:
+                    last_exception = e
+                    logger.debug(
+                        "embed_query attempt %d failed (variant len=%d): %s",
+                        attempt + 1,
+                        len(variant),
+                        e,
+                    )
+                    time.sleep(0.2 * (attempt + 1))
 
         if last_exception:
             raise last_exception

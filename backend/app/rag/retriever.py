@@ -1,6 +1,5 @@
 """
 Vector store creation and self-query retriever setup.
-Extracted from singleVideo.py / multiVideo.py.
 """
 
 import re
@@ -29,8 +28,9 @@ metadata_field_info = [
         description="The start time of the video segment in seconds (integer). "
         "Rule 1: If user asks for 'at 12:00', use (start <= 720). "
         "Rule 2: If user asks for 'after 12:00', use (start >= 720). "
-        "Rule 3: ALWAYS convert minutes:seconds to total seconds (min * 60 + sec). "
-        "Rule 4: Remove time-related keywords (e.g., '12:00', 'minutes', 'seconds') from the semantic search query part.",
+        "Rule 3: If user asks for '10 min' or '10 minutes', convert to 600 seconds. "
+        "Rule 4: ALWAYS convert minutes:seconds to total seconds (min * 60 + sec). "
+        "Rule 5: Remove time-related keywords (e.g., '12:00', 'minutes', 'seconds') from the semantic search query part.",
         type="integer",
     ),
     AttributeInfo(
