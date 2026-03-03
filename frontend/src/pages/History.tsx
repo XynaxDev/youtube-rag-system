@@ -25,6 +25,7 @@ export function History() {
     const navigate = useNavigate();
     const { showToast } = useToast();
 
+
     useEffect(() => {
         setItems(getHistory());
     }, []);
@@ -34,7 +35,7 @@ export function History() {
         if (item.type === "Summary") {
             navigate("/summary-result", { state: item.result });
         } else {
-            navigate("/compare", { state: { ...item.result, restored: true } });
+            navigate("/compare-result", { state: { ...item.result, restored: true } });
         }
     };
 

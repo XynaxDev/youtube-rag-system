@@ -11,6 +11,7 @@ import { Landing } from "./pages/Landing";
 import { Dashboard } from "./pages/Dashboard";
 import { Summarize } from "./pages/Summarize";
 import { Compare } from "./pages/Compare";
+import { CompareResult } from "./pages/CompareResult";
 import { SummaryResult } from "./pages/SummaryResult";
 import { History } from "./pages/History";
 import { ToastProvider } from "./components/GlobalToast";
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/summarize" element={<Summarize />} />
             <Route path="/compare" element={<Compare />} />
+            <Route path="/compare-result" element={<CompareResult />} />
             <Route path="/summary-result" element={<SummaryResult />} />
             {/* Sidebar Routes */}
             <Route path="/history" element={<History />} />

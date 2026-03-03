@@ -45,6 +45,10 @@ export interface CompareResponse {
   study_mode?: boolean;
 }
 
+export interface CheckTechnicalResponse {
+  is_technical: boolean;
+}
+
 // ─── API Functions ───────────────────────────────────────────
 
 async function apiFetch<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
@@ -114,13 +118,27 @@ export async function compareVideos(
   sessionId: string,
   url1: string,
   url2: string,
-  question: string = "Compare both videos and tell me which one is better for learning."
+  question: string = "Compare both videos and tell me which one is better for learning.",
+  studyMode: boolean = false
 ): Promise<CompareResponse> {
   return apiFetch<CompareResponse>("/api/compare", {
     session_id: sessionId,
     url1,
     url2,
     question,
+    study_mode: studyMode,
+  });
+}
+
+export async function checkTechnicalVideos(
+  sessionId: string,
+  url1: string,
+  url2: string
+): Promise<CheckTechnicalResponse> {
+  return apiFetch<CheckTechnicalResponse>("/api/check-technical", {
+    session_id: sessionId,
+    url1,
+    url2,
   });
 }
 

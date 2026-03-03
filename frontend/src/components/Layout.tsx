@@ -17,14 +17,18 @@ export function Layout() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const location = useLocation();
   const isSummaryResultRoute = location.pathname === "/summary-result";
-  const hideMobileTopNav = isSummaryResultRoute;
+  const isCompareResultRoute = location.pathname === "/compare-result";
+  // Hide top nav on result pages to maximize content space; show on starters
+  const hideMobileTopNav = isSummaryResultRoute || isCompareResultRoute;
+
+  const isResultRoute = isSummaryResultRoute || isCompareResultRoute;
 
   return (
     <>
       <div
         className={cn(
           "hidden md:flex bg-[#050505] text-white relative overflow-x-hidden",
-          isSummaryResultRoute ? "h-[100dvh] overflow-y-hidden" : "min-h-[100dvh] overflow-y-visible"
+          isResultRoute ? "h-[100dvh] overflow-y-hidden" : "min-h-[100dvh] overflow-y-visible"
         )}
       >
         <motion.div
@@ -38,7 +42,7 @@ export function Layout() {
         <main
           className={cn(
             "flex-1 min-w-0 relative",
-            isSummaryResultRoute
+            isResultRoute
               ? "h-full overflow-y-auto overflow-x-hidden"
               : "min-h-[100dvh] overflow-visible"
           )}
