@@ -15,6 +15,8 @@ from app.schemas import (
     CompareRequest,
     CompareResponse,
     HealthResponse,
+    CheckTechnicalRequest,
+    CheckTechnicalResponse,
 )
 from app.rag.pipeline import (
     get_or_create_session,
@@ -22,6 +24,7 @@ from app.rag.pipeline import (
     chat_with_video,
     summarize_video,
     compare_videos,
+    check_technical_videos,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,4 +95,16 @@ async def compare_endpoint(req: CompareRequest):
         return CompareResponse(**result)
     except Exception as e:
         logger.exception("Error comparing videos: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/check-technical", response_model=CheckTechnicalResponse)
+async def check_technical_endpoint(req: CheckTechnicalRequest):
+    """Check if either of the videos contains analytical or technical content suitable for study mode."""
+    try:
+        get_or_create_session(req.session_id)
+        result = check_technical_videos(req.session_id, req.url1, req.url2)
+        return CheckTechnicalResponse(is_technical=result)
+    except Exception as e:
+        logger.exception("Error checking technical videos: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

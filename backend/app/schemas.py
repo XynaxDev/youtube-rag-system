@@ -27,6 +27,13 @@ class CompareRequest(BaseModel):
     url1: str
     url2: str
     question: str = "Compare both videos and tell me which one is better for learning."
+    study_mode: bool = False
+
+
+class CheckTechnicalRequest(BaseModel):
+    session_id: str
+    url1: str
+    url2: str
 
 
 # ─── Responses ────────────────────────────────────────────────
@@ -59,6 +66,10 @@ class CompareResponse(BaseModel):
     video_a: Optional[Dict[str, str]] = None
     video_b: Optional[Dict[str, str]] = None
     study_mode: Optional[bool] = None
+
+
+class CheckTechnicalResponse(BaseModel):
+    is_technical: bool
 
 
 class HealthResponse(BaseModel):

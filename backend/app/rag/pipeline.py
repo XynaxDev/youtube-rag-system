@@ -24,7 +24,10 @@ from app.rag.retriever import (
     build_self_query_retriever,
     is_low_quality_text,
 )
-from app.rag.multi_video_pipeline import run_multi_video_pipeline
+from app.rag.multi_video_pipeline import (
+    run_multi_video_pipeline,
+    check_technical_videos_internal,
+)
 from app.rag.retrieval_helpers import (
     build_focus_query as _build_focus_query,
     doc_timestamp_candidates as _doc_timestamp_candidates,
@@ -82,9 +85,7 @@ def _normalize_summary_text(text: str) -> str:
 
     if not has_takeaways:
         sentences = [
-            s.strip()
-            for s in re.split(r"(?<=[.!?])\s+", cleaned)
-            if s and s.strip()
+            s.strip() for s in re.split(r"(?<=[.!?])\s+", cleaned) if s and s.strip()
         ]
         if not sentences:
             return cleaned
@@ -120,7 +121,9 @@ def _normalize_summary_text(text: str) -> str:
 
 
 class SummaryPayload(BaseModel):
-    summary: str = Field(description="4-5 sentence professional overview with no 'Summary:' label.")
+    summary: str = Field(
+        description="4-5 sentence professional overview with no 'Summary:' label."
+    )
     questions: list[str] = Field(
         description="Exactly 3 short, video-specific starter questions. Each should be 4-5 words."
     )
@@ -197,6 +200,7 @@ CHAT_PROMPT = PromptTemplate(
     """,
     input_variables=["video_summary", "chat_history", "question"],
 )
+
 
 # â”€â”€â”€ Core Pipeline Functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def process_video(session_id: str, video_url: str) -> dict:
@@ -395,16 +399,16 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
 
     # Rank by relevance first, then add nearby timeline neighbors.
     ranking_query = focus_query or dense_query or message
-    seed_docs = _rank_docs_for_query(
-        good_docs,
-        ranking_query,
-        max_docs=min(max(6, retrieval_k), 10),
-    ) or good_docs[: min(max(6, retrieval_k), 10)]
+    seed_docs = (
+        _rank_docs_for_query(
+            good_docs,
+            ranking_query,
+            max_docs=min(max(6, retrieval_k), 10),
+        )
+        or good_docs[: min(max(6, retrieval_k), 10)]
+    )
     if is_precise:
-        numeric_docs = [
-            d for d in good_docs
-            if re.search(r"\d", d.page_content or "")
-        ]
+        numeric_docs = [d for d in good_docs if re.search(r"\d", d.page_content or "")]
         precise_docs = _rank_docs_for_query(
             numeric_docs,
             ranking_query,
@@ -435,7 +439,9 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         else ""
     )
     # Ground timestamp on the top relevance seed (not the earliest timeline chunk).
-    primary_doc = seed_docs[0] if seed_docs else (context_docs[0] if context_docs else None)
+    primary_doc = (
+        seed_docs[0] if seed_docs else (context_docs[0] if context_docs else None)
+    )
     top_candidates = _doc_timestamp_candidates(primary_doc) if primary_doc else []
     if top_candidates:
         timestamp = int(top_candidates[0])
@@ -541,7 +547,9 @@ def summarize_video(session_id: str, video_url: str) -> dict:
     }
 
 
-def compare_videos(session_id: str, url1: str, url2: str, question: str) -> dict:
+def compare_videos(
+    session_id: str, url1: str, url2: str, question: str, study_mode: bool = False
+) -> dict:
     """Compare two videos using the dedicated multi-video pipeline."""
     session = sessions[session_id]
     history = session["history"]
@@ -560,7 +568,10 @@ def compare_videos(session_id: str, url1: str, url2: str, question: str) -> dict
         }
 
     try:
-        result = run_multi_video_pipeline(proc_a, proc_b, question)
+        is_chat = len(history.messages) > 0
+        result = run_multi_video_pipeline(
+            proc_a, proc_b, question, study_mode=study_mode, is_chat=is_chat
+        )
         response_text = result["response"]
         history.add_user_message(question)
         history.add_ai_message(response_text)
@@ -573,7 +584,18 @@ def compare_videos(session_id: str, url1: str, url2: str, question: str) -> dict
         }
     except Exception as e:
         logger.exception("Multi-video comparison failed: %s", e)
-        return {"response": "Error during comparison.", "intent": "ERROR", "study_mode": False}
+        return {
+            "response": "Error during comparison.",
+            "intent": "ERROR",
+            "study_mode": False,
+        }
+
+
+def check_technical_videos(session_id: str, url1: str, url2: str) -> bool:
+    """Check if either video has deep technical/analytical content for study mode."""
+    proc_a = process_video(session_id, url1)
+    proc_b = process_video(session_id, url2)
+    return check_technical_videos_internal(proc_a, proc_b)
 
 
 # â”€â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

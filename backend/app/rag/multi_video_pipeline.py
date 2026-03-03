@@ -64,6 +64,39 @@ with 4-6 actionable bullets.
 9) Keep concise but complete.
 """
 
+DUAL_CHAT_PROMPT = """
+You are a dual-video RAG assistant.
+The user asked a specific question: {user_question}
+
+METADATA_A:
+{metadata_a}
+
+METADATA_B:
+{metadata_b}
+
+VIDEO A EVIDENCE:
+{evidence_a}
+
+VIDEO B EVIDENCE:
+{evidence_b}
+
+MODE DIRECTIVE:
+{mode_directive}
+
+Rules:
+1) Answer the specific question directly based ONLY on the evidence provided above. Do NOT write a generic summary or snapshot.
+2) Use clean, easy-to-read markdown.
+3) If comparing or discussing both videos, clearly state which video the information comes from using bold headers:
+   **Video A [{title_a}]**
+   [Details...]
+   
+   **Video B [{title_b}]**
+   [Details...]
+4) Always include specific timestamps [mm:ss] inline when referencing key moments or quotes.
+5) If the information is only present in one video, answer based on that video and explicitly mention it.
+6) Be conversational but technically precise and grounded in facts.
+"""
+
 INTENT_PROMPT = """
 You are classifying whether a dual-video request is in a learning/study context.
 
@@ -93,9 +126,7 @@ class CompareIntent(BaseModel):
     is_learning_context: bool = Field(
         description="Whether this compare request is truly in learning/study context."
     )
-    reason: str = Field(
-        description="Short reasoning for the classification."
-    )
+    reason: str = Field(description="Short reasoning for the classification.")
 
 
 def _metadata_block(meta: Dict[str, Any], stats: Dict[str, int]) -> str:
@@ -243,7 +274,9 @@ def _retrieve_docs_for_video(proc: Dict[str, Any], question: str):
         max_docs=max(3, retrieval_k // 2),
     )
 
-    merged = merge_unique_docs(docs, dense_docs, focus_docs, lexical_docs, lexical_focus_docs)
+    merged = merge_unique_docs(
+        docs, dense_docs, focus_docs, lexical_docs, lexical_focus_docs
+    )
     good = [d for d in merged if not is_low_quality_text(d.page_content)]
     if not good and merged:
         good = merged
@@ -262,6 +295,8 @@ def run_multi_video_pipeline(
     proc_a: Dict[str, Any],
     proc_b: Dict[str, Any],
     question: str,
+    study_mode: bool = False,
+    is_chat: bool = False,
 ) -> Dict[str, Any]:
     """Generate one comparison answer from two processed videos."""
     meta_a = proc_a.get("metadata", {})
@@ -281,31 +316,76 @@ def run_multi_video_pipeline(
         evidence_a_preview=evidence_a_text,
         evidence_b_preview=evidence_b_text,
     )
-    mode_directive = (
-        "This is LEARNING context: you may include Recommendation and Study Plan."
-        if intent.is_learning_context
-        else "This is NON-LEARNING context: do not include Study Plan and do not include learning recommendation."
-    )
 
-    prompt_text = COMPARISON_PROMPT.format(
+    if study_mode:
+        mode_directive = "STRICT STUDY MODE: You must provide a deeply technical and analytical comparison. Go deep into specifics, code, theories, or advanced concepts. ALWAYS include a detailed Study Plan with actionable steps, and a conclusive Recommendation section. Do not output fluff."
+    else:
+        mode_directive = (
+            "This is LEARNING context: you may include Recommendation and Study Plan."
+            if intent.is_learning_context
+            else "This is NON-LEARNING context: do not include Study Plan and do not include learning recommendation."
+        )
+
+    template = DUAL_CHAT_PROMPT if is_chat else COMPARISON_PROMPT
+    prompt_text = template.format(
         user_question=question,
         metadata_a=_metadata_block(meta_a, stats_a),
         metadata_b=_metadata_block(meta_b, stats_b),
         evidence_a=evidence_a_text,
         evidence_b=evidence_b_text,
         mode_directive=mode_directive,
+        title_a=meta_a.get("title", "Video A"),
+        title_b=meta_b.get("title", "Video B"),
     )
 
     res = open_router_model.invoke(prompt_text)
     response_text = (res.content if hasattr(res, "content") else str(res)).strip()
-    if not re.search(r"(?im)^\s{0,3}##\s*Evidence Links\b", response_text):
+    if not is_chat and not re.search(
+        r"(?im)^\s{0,3}##\s*Evidence Links\b", response_text
+    ):
         evidence_links = _build_evidence_links_section(refs_a, refs_b)
         if len(evidence_links.splitlines()) > 1:
             response_text = f"{response_text}\n\n{evidence_links}".strip()
-    study_mode = bool(re.search(r"(?im)^\s{0,3}(?:##\s*)?Study\s+Plan\b", response_text))
+
+    # If it's chat, append the evidence references explicitly at the end so parseEvidence picks them up
+    if is_chat:
+        evidence_links = _build_evidence_links_section(refs_a, refs_b)
+        if len(evidence_links.splitlines()) > 1:
+            response_text = f"{response_text}\n\n{evidence_links}".strip()
+
+    study_mode_detected = (
+        bool(re.search(r"(?im)^\s{0,3}(?:##\s*)?Study\s+Plan\b", response_text))
+        or study_mode
+    )
     return {
         "response": response_text,
-        "study_mode": study_mode,
+        "study_mode": study_mode_detected,
         "video_a": meta_a,
         "video_b": meta_b,
     }
+
+
+def check_technical_videos_internal(
+    proc_a: Dict[str, Any], proc_b: Dict[str, Any]
+) -> bool:
+    meta_a = proc_a.get("metadata", {})
+    meta_b = proc_b.get("metadata", {})
+
+    docs_a = _retrieve_docs_for_video(
+        proc_a, "technical analytical educational deep tutorial"
+    )
+    docs_b = _retrieve_docs_for_video(
+        proc_b, "technical analytical educational deep tutorial"
+    )
+
+    evidence_a_text, _, _ = _format_evidence_with_links(docs_a, "")
+    evidence_b_text, _, _ = _format_evidence_with_links(docs_b, "")
+
+    intent = _classify_compare_intent(
+        question="Is this technical, educational, or highly analytical content?",
+        meta_a=meta_a,
+        meta_b=meta_b,
+        evidence_a_preview=evidence_a_text,
+        evidence_b_preview=evidence_b_text,
+    )
+    return intent.is_learning_context
