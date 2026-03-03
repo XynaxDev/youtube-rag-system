@@ -4,6 +4,7 @@
  */
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
+const GENERIC_SERVER_ERROR = "We have some server issue. We will get back soon.";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -46,19 +47,28 @@ export interface CompareResponse {
 // ─── API Functions ───────────────────────────────────────────
 
 async function apiFetch<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch(`${API_BASE}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(errorData.detail || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+      console.error("API request failed", { endpoint, status: res.status, detail: errorData.detail });
+      throw new Error(GENERIC_SERVER_ERROR);
+    }
+
+    return res.json();
+  } catch (error) {
+    if (error instanceof Error && error.message === GENERIC_SERVER_ERROR) {
+      throw error;
+    }
+    console.error("Network/API error", { endpoint, error });
+    throw new Error(GENERIC_SERVER_ERROR);
   }
-
-  return res.json();
 }
 
 /**

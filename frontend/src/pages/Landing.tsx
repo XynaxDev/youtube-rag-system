@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { PlaySquare, FileText, ArrowRight, Zap, Brain, Clock, BarChart2, ArrowLeftRight, Github, Link2, Search, CheckCircle2, ChevronRight, Play, Sparkles, MessageCircleQuestion, ChevronDown, Rocket, Shield, Globe, ExternalLink, Mail, Twitter, Disc as Discord, Youtube, Linkedin, Instagram, Cpu, Database, Layers, LayoutGrid, Loader2 } from "lucide-react";
-import { motion, AnimatePresence, useSpring, useTransform } from "framer-motion";
+import { PlaySquare, ArrowRight, Zap, Brain, Clock, BarChart2, ArrowLeftRight, Github, Link2, Search, CheckCircle2, ChevronRight, Play, Sparkles, MessageCircleQuestion, ChevronDown, Rocket, Shield, Globe, Twitter, Linkedin, Cpu, Database, Layers, LayoutGrid, Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "../lib/utils";
 
 const fadeIn = {
@@ -57,12 +57,12 @@ function NavLink({ href, label, activeSection }: { href: string, label: string, 
 function AnimatedTerminal() {
   const [step, setStep] = useState(0);
   const steps = [
-    { text: "Initializing RAG pipeline...", color: "text-blue-400" },
-    { text: "Fetching transcript for v=dQw4w9WgXcQ", color: "text-gray-300" },
+    { text: "Initializing RAG pipeline..." },
+    { text: "Fetching transcript for v=dQw4w9WgXcQ" },
     { text: "Cleaning garbled captions...", done: true },
     { text: "Generating embeddings...", done: true },
-    { text: "Extracting key insights...", color: "text-blue-400" },
-    { text: "Analysis complete. 14 targets mapped.", color: "text-green-400", final: true },
+    { text: "Extracting key insights..." },
+    { text: "Analysis complete. 14 targets mapped.", done: true, final: true },
   ];
 
   useEffect(() => {
@@ -92,8 +92,8 @@ function AnimatedTerminal() {
             }}
             className="flex gap-4 items-start"
           >
-            <span className="text-blue-500 shrink-0">❯</span>
-            <span className={cn(s.color || "text-gray-300", s.done && step > i && "text-green-400", "flex items-center gap-2")}>
+            <span className={cn("shrink-0 font-bold", step > i ? "text-green-400" : "text-blue-400")}>{">"}</span>
+            <span className={cn("flex items-center gap-2", step > i ? "text-green-400" : "text-blue-400")}>
               {s.text}
               {step === i && <Loader2 className="w-3 h-3 animate-spin text-blue-400" />}
               {s.done && step > i && <span className="text-[10px] font-bold opacity-60 px-1.5 py-0.5 bg-green-500/10 rounded uppercase">Done</span>}
@@ -104,7 +104,6 @@ function AnimatedTerminal() {
     </div>
   );
 }
-
 function Tooltip({ children, text }: { children: React.ReactNode, text: string }) {
   return (
     <div className="group relative flex items-center justify-center">
@@ -130,7 +129,7 @@ function FAQItem({ question, answer }: { question: string, answer: string }) {
         className="w-full flex items-center justify-between p-6 text-left transition-colors"
       >
         <span className="text-lg font-semibold font-display flex items-center gap-3">
-          <MessageCircleQuestion className="w-5 h-5 text-blue-400" />
+          <MessageCircleQuestion className="w-[18px] h-[18px] sm:w-5 sm:h-5 text-blue-400 shrink-0 stroke-[2.25]" />
           {question}
         </span>
         <motion.div
@@ -628,8 +627,8 @@ export function Landing() {
 
       <footer className="border-t border-white/5 pt-24 pb-12 bg-[#050505] relative z-10 overflow-hidden">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-[1px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent"></div>
-        <div className="max-w-7xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 mb-20">
-          <div className="col-span-2 md:col-span-1">
+        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 sm:grid-cols-2 gap-12 mb-20">
+          <div>
             <div className="flex items-center gap-2 mb-6">
               <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-700 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
                 <PlaySquare className="w-5 h-5 text-white" />
@@ -639,40 +638,22 @@ export function Landing() {
             <p className="text-gray-500 text-sm leading-relaxed mb-8 max-w-[200px]">
               The next generation of video intelligence for researchers, students, and engineers.
             </p>
-            <div className="flex gap-4">
-              <div className="hidden sm:block">
-                <Tooltip text="X (Twitter)">
-                  <a href="https://x.com/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                    <Twitter className="w-5 h-5" />
-                  </a>
-                </Tooltip>
-              </div>
+            <div className="flex flex-wrap gap-4">
+              <Tooltip text="X (Twitter)">
+                <a href="https://x.com/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
+                  <Twitter className="w-5 h-5" />
+                </a>
+              </Tooltip>
               <Tooltip text="GitHub">
                 <a href="https://github.com/XynaxDev" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
                   <Github className="w-5 h-5" />
                 </a>
               </Tooltip>
-              <div className="hidden sm:block">
-                <Tooltip text="LinkedIn">
-                  <a href="https://linkedin.com/in/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                    <Linkedin className="w-5 h-5" />
-                  </a>
-                </Tooltip>
-              </div>
-              <div className="hidden sm:block">
-                <Tooltip text="Instagram">
-                  <a href="https://instagram.com/xynaxhere" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                    <Instagram className="w-5 h-5" />
-                  </a>
-                </Tooltip>
-              </div>
-              <div className="hidden sm:block">
-                <Tooltip text="Email Me">
-                  <a href="mailto:akashkumar.cs27@gmail.com" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
-                    <Mail className="w-5 h-5" />
-                  </a>
-                </Tooltip>
-              </div>
+              <Tooltip text="LinkedIn">
+                <a href="https://linkedin.com/in/akashksah" target="_blank" rel="noreferrer" className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-all border border-white/5">
+                  <Linkedin className="w-5 h-5" />
+                </a>
+              </Tooltip>
             </div>
           </div>
 
@@ -686,42 +667,18 @@ export function Landing() {
             </ul>
           </div>
 
-          <div>
-            <h4 className="font-bold mb-6 uppercase text-xs tracking-widest text-gray-400">Resources</h4>
-            <ul className="space-y-4 text-sm text-gray-500">
-              <li className="hover:text-white cursor-pointer transition-colors">Documentation</li>
-              <li className="hover:text-white cursor-pointer transition-colors">API Reference</li>
-              <li className="hover:text-white cursor-pointer transition-colors">System Status</li>
-              <li className="hover:text-white cursor-pointer transition-colors">Github Repo</li>
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="font-bold mb-6 uppercase text-xs tracking-widest text-gray-400">Stay Updated</h4>
-            <div className="relative group">
-              <input
-                type="email"
-                placeholder="email@example.com"
-                className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-500/50 transition-all"
-              />
-              <button className="absolute right-2 top-2 p-1.5 bg-blue-600 rounded-lg text-white">
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
         </div>
 
         <div className="max-w-7xl mx-auto px-6 border-t border-white/5 pt-12 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="text-xs text-gray-600 font-medium">
             © 2026 ClipIQ Intelligence Inc. All rights reserved.
           </div>
-          <div className="flex gap-8 text-xs text-gray-600 font-medium">
-            <span className="hover:text-white cursor-pointer">Privacy Policy</span>
-            <span className="hover:text-white cursor-pointer">Terms of Service</span>
-            <span className="hover:text-white cursor-pointer">Security</span>
-          </div>
+          <a href="https://github.com/XynaxDev" target="_blank" rel="noreferrer" className="text-xs text-gray-600 font-medium hover:text-white transition-colors">
+            GitHub
+          </a>
         </div>
       </footer>
     </div>
   );
 }
+

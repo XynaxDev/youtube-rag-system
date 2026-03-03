@@ -400,13 +400,15 @@ export function SummaryResult() {
         }
       }
     } catch (err: any) {
-      showToast(err.message || "AI Bridge interrupted", "error");
+      console.error("Chat transmission error", err);
+      const fallbackError = "We have some server issue. We will get back soon.";
+      showToast(fallbackError, "error");
       setChatMessages((prev) => {
         return prev.map((msg) =>
           msg.id === aiMsgId
             ? {
               ...msg,
-              content: `**Transmission Failed:** ${err.message || "Bridge interrupted."}`,
+              content: fallbackError,
               createdAt: Date.now(),
             }
             : msg
