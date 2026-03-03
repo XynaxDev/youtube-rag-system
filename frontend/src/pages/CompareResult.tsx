@@ -10,9 +10,7 @@ import {
     User,
     ArrowLeft,
     Check,
-    Clock,
     Share2,
-    ShieldCheck,
     Zap
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -264,6 +262,46 @@ const normalize = (raw: string) =>
         .replace(/\n{3,}/g, "\n\n")
         .trim();
 
+const linkifyBareTimestamps = (
+    markdown: string,
+    urlA: string,
+    urlB: string,
+    defaultTarget: "A" | "B" | "BOTH" = "BOTH",
+) => {
+    const idA = extractVideoId(urlA);
+    const idB = extractVideoId(urlB);
+    if (!markdown) return "";
+
+    const lines = markdown.split(/\r?\n/);
+    let activeSide: Side | undefined =
+        defaultTarget === "A" ? "A" : defaultTarget === "B" ? "B" : undefined;
+
+    const linked = lines.map((line) => {
+        const lower = line.toLowerCase();
+        if (/\bvideo\s*a\b|\bvdo\s*a\b/.test(lower)) activeSide = "A";
+        if (/\bvideo\s*b\b|\bvdo\s*b\b/.test(lower)) activeSide = "B";
+
+        return line.replace(/\[(\d{1,2}):([0-5]\d)\](?!\()/g, (_match, mm, ss) => {
+            const minutes = Number(mm);
+            const seconds = Number(ss);
+            if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return _match;
+            const totalSeconds = minutes * 60 + seconds;
+
+            let side: Side | undefined = activeSide;
+            if (!side && defaultTarget === "A") side = "A";
+            if (!side && defaultTarget === "B") side = "B";
+
+            const targetVideoId = side === "B" ? idB : idA;
+            if (!targetVideoId) return _match;
+            const stamp = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+            const link = `https://youtu.be/${targetVideoId}?t=${totalSeconds}s`;
+            return `[${stamp}](${link})`;
+        });
+    });
+
+    return linked.join("\n");
+};
+
 const formatClockTime = (ts?: number) => {
     if (!ts) return "";
     return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
@@ -291,19 +329,22 @@ export function CompareResult() {
     const [sessionId] = useState(state?.session_id || "");
     const [videoA] = useState<Record<string, string> | null>(state?.video_a || null);
     const [videoB] = useState<Record<string, string> | null>(state?.video_b || null);
+    const initialStudyMode = Boolean(state?.study_mode);
 
     const [activeTab, setActiveTab] = useState<"summary" | "chat">("summary");
-    const [summaryContent, setSummaryContent] = useState(normalize(state?.response || ""));
+    const [summaryContent, setSummaryContent] = useState(
+        linkifyBareTimestamps(normalize(state?.response || ""), state?.url1 || "", state?.url2 || "", "BOTH")
+    );
     const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
     const [chatInput, setChatInput] = useState("");
 
     const [isSending, setIsSending] = useState(false);
-    const [isTechLoading, setIsTechLoading] = useState(false);
     const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
 
     // Study Mode
-    const [isStudyMode, setIsStudyMode] = useState(false);
+    const [isStudyMode, setIsStudyMode] = useState(initialStudyMode);
     const [isCheckingTech, setIsCheckingTech] = useState(false);
+    const [supportsStudyMode, setSupportsStudyMode] = useState(initialStudyMode);
 
     const playerARef = useRef<any>(null);
     const playerBRef = useRef<any>(null);
@@ -327,6 +368,31 @@ export function CompareResult() {
     }, []);
 
     useEffect(() => {
+        if (!sessionId || !url1 || !url2) return;
+        let cancelled = false;
+        setIsCheckingTech(true);
+        checkTechnicalVideos(sessionId, url1, url2)
+            .then((res) => {
+                if (cancelled) return;
+                const isTechnical = Boolean(res?.is_technical);
+                setSupportsStudyMode(isTechnical || initialStudyMode);
+                if (!isTechnical && !initialStudyMode) setIsStudyMode(false);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setSupportsStudyMode(initialStudyMode);
+                if (!initialStudyMode) setIsStudyMode(false);
+            })
+            .finally(() => {
+                if (!cancelled) setIsCheckingTech(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [sessionId, url1, url2, initialStudyMode]);
+
+    useEffect(() => {
         if (activeTab !== "chat") return;
         const activeChatScroller = isDesktop ? desktopChatScrollRef.current : mobileChatScrollRef.current;
         if (activeChatScroller) {
@@ -340,13 +406,13 @@ export function CompareResult() {
         if ((source.side === "A" || (source.videoId && source.videoId === idA)) && playerARef.current) {
             playerARef.current.seekTo(source.timestamp, "seconds");
             setIsPlayingA(true);
-            showToast(`Video A → ${formatMMSS(source.timestamp)}`, "success");
+            showToast(`Video A -> ${formatMMSS(source.timestamp)}`, "success");
             return;
         }
         if ((source.side === "B" || (source.videoId && source.videoId === idB)) && playerBRef.current) {
             playerBRef.current.seekTo(source.timestamp, "seconds");
             setIsPlayingB(true);
-            showToast(`Video B → ${formatMMSS(source.timestamp)}`, "success");
+            showToast(`Video B -> ${formatMMSS(source.timestamp)}`, "success");
             return;
         }
         if (source.href) window.open(source.href, "_blank", "noopener,noreferrer");
@@ -377,43 +443,21 @@ export function CompareResult() {
         catch { showToast("Failed to copy URL", "error"); }
     };
 
-    const handleTechnicalReview = async () => {
-        if (!sessionId || !url1 || !url2 || isTechLoading || isSending) return;
-        setIsTechLoading(true);
-        try {
-            showToast("Running deep technical analysis...", "success");
-            const techQ = "Give a technical lens comparison only if the videos are learning/technical. Include concept depth, clarity, and latest video by metadata date. If non-learning, clearly state that the videos are not technical and provide a generic synthesis instead.";
-            const result = await compareVideos(sessionId, url1.trim(), url2.trim(), techQ);
-            setSummaryContent(normalize(result.response));
-            setActiveTab("summary");
-            showToast("Technical review complete", "success");
-        } catch (err: any) { showToast(err?.message || FALLBACK_ERROR, "error"); }
-        finally { setIsTechLoading(false); }
-    };
-
     const handleToggleStudyMode = async () => {
+        if (!supportsStudyMode) {
+            setIsStudyMode(false);
+            showToast("This pair is not technical enough for Study Mode.", "error");
+            return;
+        }
+
         if (isStudyMode) {
             setIsStudyMode(false);
             showToast("Deep Study Mode Disabled", "success");
             return;
         }
 
-        if (!sessionId || !url1 || !url2 || isCheckingTech) return;
-        setIsCheckingTech(true);
-        try {
-            // we should import checkTechnicalVideos
-            const res = await checkTechnicalVideos(sessionId, url1, url2);
-            if (res.is_technical) {
-                setIsStudyMode(true);
-                showToast("Deep Study Mode Enabled - Analysis pipeline upgraded", "success");
-            } else {
-                showToast("Content lacking technical depth for Study Mode.", "error");
-            }
-        } catch (err: any) {
-            showToast(err?.message || "Failed to check technical content", "error");
-        } finally {
-            setIsCheckingTech(false);
-        }
+        setIsStudyMode(true);
+        showToast("Deep Study Mode Enabled - Analysis pipeline upgraded", "success");
     };
 
     /**
@@ -450,12 +494,13 @@ export function CompareResult() {
                 responseSources = result.sources || [];
             } else {
                 // Multi-video: extract timestamps from both videos inline in response
-                const result = await compareVideos(sessionId, url1.trim(), url2.trim(), question, isStudyMode);
+                const result = await compareVideos(sessionId, url1.trim(), url2.trim(), question, isStudyMode, true);
                 responseText = result.response;
             }
 
+            const finalContent = linkifyBareTimestamps(normalize(responseText), url1, url2, target);
             setChatMessages((prev) => prev.map((m) =>
-                m.id === aiId ? { ...m, content: normalize(responseText), sources: responseSources, targetSide: target, createdAt: Date.now() } : m
+                m.id === aiId ? { ...m, content: finalContent, sources: responseSources, targetSide: target, createdAt: Date.now() } : m
             ));
 
             // Auto-seek for single-video responses with sources
@@ -477,26 +522,6 @@ export function CompareResult() {
                 item.id === aiId ? { ...item, content: err?.message || FALLBACK_ERROR, createdAt: Date.now() } : item
             ));
         } finally { setIsSending(false); }
-    };
-
-    /* ---------- Timestamp extraction from sources ---------- */
-    const extractTimestamps = (content: string, sources?: Array<{ timestamp: number; video_id: string }>) => {
-        const sourceTs = (sources || []).map(s => ({ timestamp: Number(s.timestamp), video_id: s.video_id })).filter(s => Number.isFinite(s.timestamp) && s.timestamp >= 0);
-        if (sourceTs.length > 0) return sourceTs;
-        // fallback: extract from markdown links
-        const matches = Array.from(content.matchAll(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]+)[^\s]*?(?:t=|\&t=)(\d+)s?/g));
-        const uniqueKeys = new Set<string>();
-        const results: Array<{ timestamp: number; video_id: string }> = [];
-        for (const m of matches) {
-            const vid = m[1];
-            const ts = parseInt(m[2], 10);
-            const key = `${vid}-${ts}`;
-            if (!uniqueKeys.has(key)) {
-                uniqueKeys.add(key);
-                results.push({ timestamp: ts, video_id: vid });
-            }
-        }
-        return results;
     };
 
     /* ---------- Shared Renderers ---------- */
@@ -539,9 +564,8 @@ export function CompareResult() {
     const renderChatMessage = (msg: ChatMessage) => {
         if (msg.role === "ai" && msg.content === "thinking...") return <ThinkingLine key={msg.id} compact />;
         const parsed = parseEvidence(msg.content, url1, url2);
-        const timestamps = msg.role === "ai" ? extractTimestamps(msg.content, msg.sources) : [];
-        const idA = extractVideoId(url1);
-        const idB = extractVideoId(url2);
+        const defaultTarget = msg.targetSide || "BOTH";
+        const markdownToRender = linkifyBareTimestamps(parsed.cleanMarkdown, url1, url2, defaultTarget);
         return (
             <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} key={msg.id}
                 className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}>
@@ -571,7 +595,7 @@ export function CompareResult() {
                             ),
                             a: ({ href, children }) => renderMarkdownTimestamp(href, children),
                         }}>{
-                                parsed.cleanMarkdown
+                                markdownToRender
                                     .replace(/^\s*Source:\s*$/gim, "")
                                     .replace(/\[https?:\/\/youtu\.be\/[^\s\]]+\]/g, "")
                                     .replace(/https?:\/\/youtu\.be\/[^\s\]]+/g, "")
@@ -587,33 +611,6 @@ export function CompareResult() {
                             </Tooltip>
                             <div className="h-3 w-px bg-white/10 mx-px" />
                             <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
-                            {timestamps.length > 0 && (
-                                <>
-                                    <div className="h-3 w-px bg-white/10 mx-px" />
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {timestamps.map((ts, idx) => {
-                                            const timeStr = formatMMSS(ts.timestamp);
-                                            const isA = ts.video_id === idA || msg.targetSide === "A";
-                                            const isB = ts.video_id === idB || msg.targetSide === "B";
-                                            const label = msg.targetSide === "BOTH" ? (ts.video_id === idA ? "A" : ts.video_id === idB ? "B" : "") : "";
-                                            return (
-                                                <button key={idx}
-                                                    onClick={() => {
-                                                        if (isB && playerBRef.current) { playerBRef.current.seekTo(ts.timestamp, "seconds"); setIsPlayingB(true); }
-                                                        else if (isA && playerARef.current) { playerARef.current.seekTo(ts.timestamp, "seconds"); setIsPlayingA(true); }
-                                                    }}
-                                                    className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono text-[10px] font-bold active:scale-95 transition-all",
-                                                        isB ? "bg-purple-600/10 border border-purple-500/20 text-purple-400 hover:bg-purple-600/20" : "bg-blue-600/10 border border-blue-500/20 text-blue-400 hover:bg-blue-600/20"
-                                                    )}>
-                                                    <Play className={cn("w-2.5 h-2.5 fill-current")} />
-                                                    {label && <span className="text-[8px] opacity-70">Vol.{label}</span>}
-                                                    {timeStr}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </>
-                            )}
                         </div>
                     )}
                 </div>
@@ -626,26 +623,33 @@ export function CompareResult() {
         );
     };
 
-    const starterQuestions = [
-        "Why was Video A better?",
-        "Compare technical depth.",
-        "What's the unified verdict?",
-    ];
+    const starterQuestions = supportsStudyMode
+        ? [
+            "Why was Video A better?",
+            "Compare technical depth.",
+            "What's the unified verdict?",
+        ]
+        : [
+            "What is common in both videos?",
+            "How do Video A and B differ?",
+            "Which moments matter most?",
+        ];
 
     const renderChatEmpty = () => (
-        <div className="h-full flex flex-col items-center justify-center text-center py-12 px-6">
+        <div className="h-full flex flex-col items-center justify-center text-center py-12 md:py-20 pt-16 md:pt-12 px-6">
             <div className="w-16 h-16 aspect-square rounded-[1.5rem] border border-blue-500/30 bg-blue-500/10 flex items-center justify-center mb-6 shadow-[0_0_50px_rgba(59,130,246,0.2)]">
                 <MessageSquare className="w-8 h-8 text-blue-400" />
             </div>
             <h4 className="text-lg font-bold mb-3 font-display tracking-widest text-white uppercase">ClipIQ Interface Ready</h4>
             <p className="text-[10px] max-w-[280px] font-bold uppercase tracking-[0.24em] text-blue-300/90 mb-3 mx-auto">Ask about specific timestamps, context, or hidden insights</p>
-            <p className="text-xs text-gray-500 mb-8">Try: "What happens at 5:00 in Video A?"</p>
             <div className="flex flex-wrap items-center justify-center gap-2 max-w-lg">
-                <button onClick={() => handleAsk("Run deep technical analysis and comparison on both videos.")}
-                    disabled={isSending || isCheckingTech}
-                    className="px-4 py-2 bg-blue-600 text-white border border-blue-500 text-[10px] font-bold rounded-full active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                    <FlaskConical className="w-3.5 h-3.5" /> Analyze Deep
-                </button>
+                {supportsStudyMode && (
+                    <button onClick={() => handleAsk("Run deep technical analysis and comparison on both videos.")}
+                        disabled={isSending || isCheckingTech}
+                        className="px-4 py-2 bg-blue-600 text-white border border-blue-500 text-[10px] font-bold rounded-full active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                        <FlaskConical className="w-3.5 h-3.5" /> Analyze Deep
+                    </button>
+                )}
                 {starterQuestions.map((q) => (
                     <button key={q} onClick={() => handleAsk(q)}
                         className="px-4 py-2 bg-white/5 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500 text-[10px] font-bold text-gray-400 hover:text-white rounded-full transition-all active:scale-95 disabled:opacity-50"
@@ -661,29 +665,31 @@ export function CompareResult() {
                 "w-full mx-auto relative flex items-center gap-2 bg-white/[0.04] border rounded-[1.25rem] px-3 transition-all shadow-inner p-1.5",
                 isStudyMode ? "border-green-500/50 focus-within:border-green-400" : "border-white/10 focus-within:border-blue-500/40"
             )}>
-                <StudyModeTooltip active={isStudyMode} align="left">
-                    <button
-                        onClick={handleToggleStudyMode}
-                        disabled={isCheckingTech || isSending}
-                        className={cn(
-                            "w-9 h-9 flex items-center justify-center rounded-xl transition-all shadow-lg shrink-0 border relative",
-                            isStudyMode
-                                ? "bg-green-600/20 border-green-500/30 text-green-400 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
-                                : "bg-white/5 border-white/5 text-gray-400 hover:bg-blue-500/10 hover:border-blue-500/30 hover:text-blue-400",
-                            isCheckingTech && "animate-pulse"
-                        )}
-                    >
-                        <FlaskConical className="w-4 h-4" />
-                        {isStudyMode && <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-green-500 rounded-full animate-ping" />}
-                    </button>
-                </StudyModeTooltip>
+                {supportsStudyMode && (
+                    <StudyModeTooltip active={isStudyMode} align="left">
+                        <button
+                            onClick={handleToggleStudyMode}
+                            disabled={isCheckingTech || isSending}
+                            className={cn(
+                                "w-9 h-9 flex items-center justify-center rounded-xl transition-all shadow-lg shrink-0 border relative",
+                                isStudyMode
+                                    ? "bg-green-600/20 border-green-500/30 text-green-400 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
+                                    : "bg-white/5 border-white/5 text-gray-400 hover:bg-blue-500/10 hover:border-blue-500/30 hover:text-blue-400",
+                                isCheckingTech && "animate-pulse"
+                            )}
+                        >
+                            <FlaskConical className="w-4 h-4" />
+                            {isStudyMode && <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-green-500 rounded-full animate-ping" />}
+                        </button>
+                    </StudyModeTooltip>
+                )}
 
                 <textarea
                     data-lenis-prevent
                     value={chatInput}
                     onChange={(e) => { setChatInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px'; }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAsk(); (e.target as HTMLTextAreaElement).style.height = 'auto'; } }}
-                    placeholder={isStudyMode ? "Study mode active. Ask deeply technical questions..." : "Ask anything about the videos..."}
+                    placeholder={supportsStudyMode && isStudyMode ? "Study mode active. Ask deeply technical questions..." : "Ask anything about the videos..."}
                     rows={1}
                     className="flex-1 self-end bg-transparent border-none outline-none py-2 px-1 text-[14px] leading-relaxed text-white placeholder:text-gray-600 focus:ring-0 resize-none max-h-[100px] overflow-y-auto touch-auto"
                     disabled={isSending}
@@ -692,13 +698,13 @@ export function CompareResult() {
                 <button onClick={() => handleAsk()} disabled={!chatInput.trim() || isSending}
                     className={cn(
                         "w-8 h-8 flex items-center justify-center text-white rounded-full disabled:opacity-20 active:scale-95 shrink-0 shadow-lg self-center transition-colors",
-                        isStudyMode ? "bg-green-600/80 hover:bg-green-500" : "bg-blue-600/80 hover:bg-blue-500"
+                        supportsStudyMode && isStudyMode ? "bg-green-600/80 hover:bg-green-500" : "bg-blue-600/80 hover:bg-blue-500"
                     )}>
                     <Send className="w-3.5 h-3.5 fill-white text-white" />
                 </button>
             </div>
             <p className="mt-2 text-center text-[10px] text-gray-500 leading-relaxed font-mono">
-                {isStudyMode ? (
+                {supportsStudyMode && isStudyMode ? (
                     <span className="text-green-500/70">STUDY PIPELINE VERIFIED • TECHNICAL MODE ON</span>
                 ) : (
                     ACCURACY_NOTE
@@ -796,7 +802,7 @@ export function CompareResult() {
                             </div>
                         ) : (
                             <div className="bg-[#070707] rounded-3xl border border-white/5 flex flex-col overflow-hidden relative"
-                                style={{ height: 'calc(100dvh - 280px)', minHeight: '500px', touchAction: "pan-y" }}>
+                                style={{ height: 'calc(100dvh - 248px)', minHeight: '540px', touchAction: "pan-y" }}>
                                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/[0.05] blur-[50px] pointer-events-none" />
                                 <div ref={mobileChatScrollRef} data-lenis-prevent
                                     className="flex-1 min-h-0 overflow-y-scroll overscroll-y-contain p-4 md:p-6 space-y-6 custom-scrollbar flex flex-col"
@@ -928,24 +934,7 @@ export function CompareResult() {
                                                 className="flex-1 overflow-y-scroll overflow-x-hidden overscroll-y-contain custom-scrollbar p-5 md:p-6 lg:p-12 space-y-10 md:space-y-12 flex flex-col"
                                                 style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}>
                                                 {chatMessages.length === 0 ? (
-                                                    <div className="h-full flex flex-col items-center justify-center text-center py-20 cursor-default">
-                                                        <div className="w-20 h-20 aspect-square rounded-3xl border border-blue-500/30 bg-blue-500/10 flex items-center justify-center mb-6 shadow-[0_0_60px_rgba(59,130,246,0.2)]"><MessageSquare className="w-10 h-10 text-blue-400" /></div>
-                                                        <h4 className="text-xl font-bold mb-3 font-display tracking-widest text-white uppercase">ClipIQ Interface Ready</h4>
-                                                        <p className="text-[10px] max-w-[330px] font-bold uppercase tracking-[0.24em] text-blue-300/90 mb-3">Ask about specific timestamps, context, or hidden insights</p>
-                                                        <p className="text-xs text-gray-500 mb-8">Try: "What happens at 5:00 in Video A?"</p>
-                                                        <div className="flex flex-wrap items-center justify-center gap-2 max-w-lg px-4">
-                                                            <button onClick={() => handleAsk("Run deep technical analysis and comparison on both videos.")}
-                                                                disabled={isSending || isTechLoading}
-                                                                className="px-4 py-2 bg-blue-600 text-white border border-blue-500 text-[10px] md:text-xs font-bold rounded-full active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                                                                <FlaskConical className="w-3.5 h-3.5" /> Analyze Deep
-                                                            </button>
-                                                            {starterQuestions.map((q) => (
-                                                                <button key={q} onClick={() => handleAsk(q)}
-                                                                    className="px-4 py-2 bg-white/5 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500 text-[10px] md:text-xs font-bold text-gray-400 hover:text-white rounded-full transition-all active:scale-95 disabled:opacity-50"
-                                                                    disabled={isSending}>{q}</button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
+                                                    renderChatEmpty()
                                                 ) : (
                                                     <div className="space-y-10 pb-20">
                                                         {chatMessages.map(renderChatMessage)}

@@ -643,19 +643,19 @@ export function SummaryResult() {
                         return (
                           <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} key={msg.id}
                             className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}>
-                          {msg.role === "ai" && (
-                            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/5 border border-white/10 flex items-center justify-center mr-3 mt-1 shrink-0 shadow-lg">
-                              <Sparkles className="w-4 h-4 text-blue-400" />
-                            </div>
-                          )}
-                          <div className={cn("flex flex-col min-w-0 gap-2", msg.role === "user" ? "max-w-[50%] items-end ml-auto" : "max-w-[92%] items-start")}>
-                            <div className={cn(
-                              "px-5 py-4 rounded-[1.25rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
-                              msg.role === "user"
-                                ? "bg-blue-600 text-white rounded-tr-none font-medium text-[14px]"
-                                : "bg-[#111113] border border-white/10 text-gray-200 rounded-tl-none text-[14px] leading-relaxed"
-                            )}>
-                              <div className="prose prose-invert prose-sm max-w-none">
+                            {msg.role === "ai" && (
+                              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/5 border border-white/10 flex items-center justify-center mr-3 mt-1 shrink-0 shadow-lg">
+                                <Sparkles className="w-4 h-4 text-blue-400" />
+                              </div>
+                            )}
+                            <div className={cn("flex flex-col min-w-0 gap-2", msg.role === "user" ? "max-w-[50%] items-end ml-auto" : "max-w-[92%] items-start")}>
+                              <div className={cn(
+                                "px-5 py-4 rounded-[1.25rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
+                                msg.role === "user"
+                                  ? "bg-blue-600 text-white rounded-tr-none font-medium text-[14px]"
+                                  : "bg-[#111113] border border-white/10 text-gray-200 rounded-tl-none text-[14px] leading-relaxed"
+                              )}>
+                                <div className="prose prose-invert prose-sm max-w-none">
                                   <ReactMarkdown
                                     components={{
                                       p: ({ children }) => <p className="m-0">{children}</p>,
@@ -709,56 +709,56 @@ export function SummaryResult() {
                                       .replace(/https?:\/\/youtu\.be\/[^\s\]]+/g, "")
                                       .replace(/(?<!\]\()(https?:\/\/[^\s]+)/g, "[$1]($1)")}
                                   </ReactMarkdown>
+                                </div>
                               </div>
+                              {msg.role === "ai" && msg.content !== "thinking..." && (
+                                <div className="flex items-center gap-2 mt-2 ml-1">
+                                  <Tooltip text="Copy response" align="left">
+                                    <button
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(msg.content);
+                                        showToast("Copied", "success");
+                                      }}
+                                      className="p-1.5 text-gray-500 hover:text-white transition-colors"
+                                    >
+                                      <Copy className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                                    </button>
+                                  </Tooltip>
+                                  <div className="h-3 w-px bg-white/10 mx-px" />
+                                  <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
+                                  {timestamps.length > 0 && (
+                                    <>
+                                      <div className="h-3 w-px bg-white/10 mx-px" />
+                                      <div className="flex flex-wrap gap-1.5">
+                                        {timestamps.map((seconds, idx) => {
+                                          const mins = Math.floor(seconds / 60);
+                                          const s = seconds % 60;
+                                          const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
+                                          return (
+                                            <button
+                                              key={idx}
+                                              onClick={() => handleSeek(seconds)}
+                                              className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-600/10 border border-blue-500/20 rounded-lg text-blue-400 font-mono text-[10px] font-bold hover:bg-blue-600/20 active:scale-95 transition-all"
+                                            >
+                                              <Play className="w-2.5 h-2.5 fill-current" />
+                                              {timeStr}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                            {msg.role === "ai" && msg.content !== "thinking..." && (
-                              <div className="flex items-center gap-2 mt-2 ml-1">
-                                <Tooltip text="Copy response" align="left">
-                                  <button
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(msg.content);
-                                      showToast("Copied", "success");
-                                    }}
-                                    className="p-1.5 text-gray-500 hover:text-white transition-colors"
-                                  >
-                                    <Copy className="w-3 h-3 md:w-3.5 md:h-3.5" />
-                                  </button>
-                                </Tooltip>
-                                <div className="h-3 w-px bg-white/10 mx-px" />
-                                <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
-                                {timestamps.length > 0 && (
-                                  <>
-                                    <div className="h-3 w-px bg-white/10 mx-px" />
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {timestamps.map((seconds, idx) => {
-                                        const mins = Math.floor(seconds / 60);
-                                        const s = seconds % 60;
-                                        const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
-                                        return (
-                                          <button
-                                            key={idx}
-                                            onClick={() => handleSeek(seconds)}
-                                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-600/10 border border-blue-500/20 rounded-lg text-blue-400 font-mono text-[10px] font-bold hover:bg-blue-600/20 active:scale-95 transition-all"
-                                          >
-                                            <Play className="w-2.5 h-2.5 fill-current" />
-                                            {timeStr}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          {
-                            msg.role === "user" && (
-                              <div className="w-8 h-8 rounded-xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center ml-3 mt-1 shrink-0 shadow-lg">
-                                <User className="w-4 h-4 text-blue-400" />
-                              </div>
-                            )
-                          }
-                        </motion.div>
+                            {
+                              msg.role === "user" && (
+                                <div className="w-8 h-8 rounded-xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center ml-3 mt-1 shrink-0 shadow-lg">
+                                  <User className="w-4 h-4 text-blue-400" />
+                                </div>
+                              )
+                            }
+                          </motion.div>
                         );
                       })}
                       <div ref={mobileChatEndRef} />
@@ -1094,28 +1094,28 @@ export function SummaryResult() {
                                   key={msg.id}
                                   className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}
                                 >
-                                {msg.role === "user" ? (
-                                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center ml-4 md:ml-5 mt-1 shrink-0 shadow-lg order-2 group-hover/msg:border-blue-500/40 transition-colors">
-                                    <User className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
-                                  </div>
-                                ) : (
-                                  <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-gradient-to-br from-blue-500/20 to-indigo-500/5 border border-white/10 flex items-center justify-center mr-4 md:mr-5 mt-1 shrink-0 shadow-lg group-hover/msg:border-blue-500/40 transition-colors">
-                                    <Sparkles className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
-                                  </div>
-                                )}
-                                <div className={cn(
-                                  "flex flex-col min-w-0 gap-2 w-fit",
-                                  msg.role === "user"
-                                    ? "max-w-[50%] items-end"
-                                    : "max-w-[90%] lg:max-w-[85%] items-start"
-                                )}>
+                                  {msg.role === "user" ? (
+                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center ml-4 md:ml-5 mt-1 shrink-0 shadow-lg order-2 group-hover/msg:border-blue-500/40 transition-colors">
+                                      <User className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
+                                    </div>
+                                  ) : (
+                                    <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-gradient-to-br from-blue-500/20 to-indigo-500/5 border border-white/10 flex items-center justify-center mr-4 md:mr-5 mt-1 shrink-0 shadow-lg group-hover/msg:border-blue-500/40 transition-colors">
+                                      <Sparkles className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
+                                    </div>
+                                  )}
                                   <div className={cn(
-                                    "px-5 py-4 rounded-[1.5rem] md:rounded-[2rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
+                                    "flex flex-col min-w-0 gap-2 w-fit",
                                     msg.role === "user"
-                                      ? "bg-blue-600 text-white rounded-tr-none font-medium text-[13px] md:text-[14px]"
-                                      : "bg-[#0f1115] border border-white/10 text-gray-300 rounded-tl-none text-[13px] md:text-[14px] leading-relaxed"
+                                      ? "max-w-[50%] items-end"
+                                      : "max-w-[90%] lg:max-w-[85%] items-start"
                                   )}>
-                                    <div className="prose prose-invert max-w-none">
+                                    <div className={cn(
+                                      "px-5 py-4 rounded-[1.5rem] md:rounded-[2rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
+                                      msg.role === "user"
+                                        ? "bg-blue-600 text-white rounded-tr-none font-medium text-[13px] md:text-[14px]"
+                                        : "bg-[#0f1115] border border-white/10 text-gray-300 rounded-tl-none text-[13px] md:text-[14px] leading-relaxed"
+                                    )}>
+                                      <div className="prose prose-invert max-w-none">
                                         <ReactMarkdown
                                           components={{
                                             h1: ({ children }) => <h1 className="text-white font-bold text-lg md:text-xl mt-4 mb-2 font-serif">{children}</h1>,
@@ -1177,50 +1177,50 @@ export function SummaryResult() {
                                             .replace(/https?:\/\/youtu\.be\/[^\s\]]+/g, "")
                                             .replace(/(?<!\]\()(https?:\/\/[^\s]+)/g, "[$1]($1)")}
                                         </ReactMarkdown>
+                                      </div>
                                     </div>
+                                    {msg.role === "ai" && msg.content !== "thinking..." && (
+                                      <div className="flex items-center gap-3 mt-2.5 ml-1">
+                                        <Tooltip text="Copy response" align="left">
+                                          <button
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(msg.content);
+                                              showToast("Copied to clipboard", "success");
+                                            }}
+                                            className="p-1.5 text-gray-500 hover:text-white transition-colors"
+                                          >
+                                            <Copy className="w-3.5 h-3.5" />
+                                          </button>
+                                        </Tooltip>
+                                        <div className="h-3 w-px bg-white/10 mx-px" />
+                                        <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
+                                        {timestamps.length > 0 && (
+                                          <>
+                                            <div className="h-3 w-px bg-white/10 mx-px" />
+                                            <div className="flex flex-wrap gap-2">
+                                              {timestamps.map((seconds, idx) => {
+                                                const mins = Math.floor(seconds / 60);
+                                                const s = seconds % 60;
+                                                const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
+                                                return (
+                                                  <Tooltip key={idx} text={`Seek to ${timeStr}`} align="left">
+                                                    <button
+                                                      onClick={() => handleSeek(seconds)}
+                                                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600/10 border border-blue-500/30 rounded-lg text-blue-400 font-mono text-[10px] font-bold hover:bg-blue-600/20 active:scale-95 transition-all shadow-sm"
+                                                    >
+                                                      <Play className="w-2.5 h-2.5 fill-current" />
+                                                      {timeStr}
+                                                    </button>
+                                                  </Tooltip>
+                                                );
+                                              })}
+                                            </div>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
                                   </div>
-                                  {msg.role === "ai" && msg.content !== "thinking..." && (
-                                    <div className="flex items-center gap-3 mt-2.5 ml-1">
-                                      <Tooltip text="Copy response" align="left">
-                                        <button
-                                          onClick={() => {
-                                            navigator.clipboard.writeText(msg.content);
-                                            showToast("Copied to clipboard", "success");
-                                          }}
-                                          className="p-1.5 text-gray-500 hover:text-white transition-colors"
-                                        >
-                                          <Copy className="w-3.5 h-3.5" />
-                                        </button>
-                                      </Tooltip>
-                                      <div className="h-3 w-px bg-white/10 mx-px" />
-                                      <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
-                                      {timestamps.length > 0 && (
-                                        <>
-                                          <div className="h-3 w-px bg-white/10 mx-px" />
-                                          <div className="flex flex-wrap gap-2">
-                                            {timestamps.map((seconds, idx) => {
-                                              const mins = Math.floor(seconds / 60);
-                                              const s = seconds % 60;
-                                              const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
-                                              return (
-                                                <Tooltip key={idx} text={`Seek to ${timeStr}`} align="left">
-                                                  <button
-                                                    onClick={() => handleSeek(seconds)}
-                                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600/10 border border-blue-500/30 rounded-lg text-blue-400 font-mono text-[10px] font-bold hover:bg-blue-600/20 active:scale-95 transition-all shadow-sm"
-                                                  >
-                                                    <Play className="w-2.5 h-2.5 fill-current" />
-                                                    {timeStr}
-                                                  </button>
-                                                </Tooltip>
-                                              );
-                                            })}
-                                          </div>
-                                        </>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </motion.div>
+                                </motion.div>
                               );
                             })}
                           </div>

@@ -119,7 +119,8 @@ export async function compareVideos(
   url1: string,
   url2: string,
   question: string = "Compare both videos and tell me which one is better for learning.",
-  studyMode: boolean = false
+  studyMode: boolean = false,
+  isChat: boolean = false
 ): Promise<CompareResponse> {
   return apiFetch<CompareResponse>("/api/compare", {
     session_id: sessionId,
@@ -127,6 +128,7 @@ export async function compareVideos(
     url2,
     question,
     study_mode: studyMode,
+    is_chat: isChat,
   });
 }
 

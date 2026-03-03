@@ -5,7 +5,8 @@ import {
   Scale,
   Check,
   Loader2,
-  Sparkles,
+  FlaskConical,
+  Info,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
@@ -85,6 +86,8 @@ export function Compare() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [isComparing, setIsComparing] = useState(false);
+  const [studyModeEnabled, setStudyModeEnabled] = useState(false);
+  const [isStudyHintOpen, setIsStudyHintOpen] = useState(false);
   const lenis = useLenis();
 
   useEffect(() => {
@@ -116,7 +119,14 @@ export function Compare() {
       const procB = await processVideo(url2.trim());
       setStatus("Generating contrast map");
 
-      const result = await compareVideos(procA.session_id, url1.trim(), url2.trim(), DEFAULT_COMPARE_QUESTION);
+      const result = await compareVideos(
+        procA.session_id,
+        url1.trim(),
+        url2.trim(),
+        DEFAULT_COMPARE_QUESTION,
+        studyModeEnabled,
+        false
+      );
 
       const metaA = result.video_a || { title: procA.title, channel: procA.channel, date: procA.date };
       const metaB = result.video_b || { title: procB.title, channel: procB.channel, date: procB.date };
@@ -133,6 +143,7 @@ export function Compare() {
           session_id: procA.session_id,
           url1: url1.trim(),
           url2: url2.trim(),
+          study_mode: studyModeEnabled,
           restored: true,
         },
       });
@@ -147,6 +158,7 @@ export function Compare() {
           session_id: procA.session_id,
           url1: url1.trim(),
           url2: url2.trim(),
+          study_mode: studyModeEnabled,
         },
       });
     } catch (err: any) {
@@ -206,19 +218,70 @@ export function Compare() {
                       <Check className="w-3.5 h-3.5 text-blue-500/40" />
                       Temporal Syncing Enabled
                     </div>
-                    <button
-                      type="submit"
-                      disabled={!url1.trim() || !url2.trim() || isComparing}
-                      className={cn(
-                        "w-full md:w-auto px-6 h-10 md:h-12 md:px-8 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap inline-flex items-center justify-center gap-3",
-                        url1.trim() && url2.trim()
-                          ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
-                          : "bg-white/5 text-gray-700 cursor-not-allowed"
-                      )}
-                    >
-                      <Scale className="w-4 h-4" />
-                      Contrast Hub
-                    </button>
+                    <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto justify-end">
+                      <div className="flex items-center gap-2">
+                        <FlaskConical className={cn("w-4 h-4", studyModeEnabled ? "text-green-400" : "text-blue-400")} />
+                        <button
+                          type="button"
+                          onClick={() => setStudyModeEnabled((prev) => !prev)}
+                          aria-label="Toggle study mode"
+                          className={cn(
+                            "relative w-14 h-8 rounded-full border transition-all",
+                            studyModeEnabled
+                              ? "bg-green-500/20 border-green-500/40"
+                              : "bg-white/5 border-white/15"
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md transition-transform duration-200",
+                              studyModeEnabled ? "translate-x-6 bg-green-300" : "translate-x-0 bg-white"
+                            )}
+                          />
+                        </button>
+                        <div
+                          className="relative"
+                          onMouseEnter={() => setIsStudyHintOpen(true)}
+                          onMouseLeave={() => setIsStudyHintOpen(false)}
+                        >
+                          <button
+                            type="button"
+                            aria-label="Study mode info"
+                            className="w-8 h-8 rounded-xl border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:border-white/20 transition-all flex items-center justify-center"
+                          >
+                            <Info className="w-4 h-4" />
+                          </button>
+                          <div className={cn(
+                            "absolute right-0 top-full mt-2 w-[280px] md:w-[320px] rounded-2xl border border-white/15 bg-[#101219]/95 backdrop-blur-xl p-4 text-left shadow-2xl z-30 transition-all duration-200",
+                            isStudyHintOpen ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-1 pointer-events-none"
+                          )}>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-300 mb-2">When To Use Study Mode</p>
+                            <p className="text-[11px] text-gray-300 leading-relaxed mb-2">
+                              Use it for technical talks, lectures, tutorials, coding/system design, research breakdowns, or deep analytical discussions.
+                            </p>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 mb-1">Why Use It</p>
+                            <ul className="space-y-1.5 text-[11px] text-gray-400 leading-relaxed">
+                              <li>Deeper concept-level comparison across both videos.</li>
+                              <li>Structured technical verdict with stronger reasoning depth.</li>
+                              <li>Actionable study guidance when content supports it.</li>
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={!url1.trim() || !url2.trim() || isComparing}
+                        className={cn(
+                          "w-full md:w-auto px-6 h-10 md:h-12 md:px-8 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap inline-flex items-center justify-center gap-3",
+                          url1.trim() && url2.trim()
+                            ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
+                            : "bg-white/5 text-gray-700 cursor-not-allowed"
+                        )}
+                      >
+                        <Scale className="w-4 h-4" />
+                        Generate
+                      </button>
+                    </div>
                   </div>
                 </div>
               </form>
