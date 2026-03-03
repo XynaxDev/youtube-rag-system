@@ -42,6 +42,7 @@ export interface CompareResponse {
   intent: string;
   video_a?: Record<string, string>;
   video_b?: Record<string, string>;
+  study_mode?: boolean;
 }
 
 // ─── API Functions ───────────────────────────────────────────
