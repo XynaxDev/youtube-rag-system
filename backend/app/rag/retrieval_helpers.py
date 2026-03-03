@@ -195,18 +195,25 @@ def _collect_overlap_tokens(query_tokens: list[str], token_set: set[str]) -> lis
         if tok in token_set:
             overlap.append(tok)
             continue
-        if len(tok) < 5:
+        if len(tok) < 3:
             continue
         prefix = tok[:3]
         for cand in candidates:
-            if len(cand) < 4:
+            if len(cand) < 3:
                 continue
-            if abs(len(cand) - len(tok)) > 4:
+            # Handle clipped forms like "prep" -> "preparing" without hardcoded vocab.
+            if len(tok) <= 4 and cand.startswith(tok) and len(cand) >= len(tok) + 2:
+                overlap.append(tok)
+                break
+            if len(cand) <= 4 and tok.startswith(cand) and len(tok) >= len(cand) + 2:
+                overlap.append(tok)
+                break
+            if abs(len(cand) - len(tok)) > 7:
                 continue
             if prefix != cand[:3]:
                 continue
             ratio = SequenceMatcher(None, tok, cand).ratio()
-            if ratio >= 0.72:
+            if ratio >= 0.68:
                 overlap.append(tok)
                 break
     return overlap

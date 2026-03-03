@@ -1,0 +1,311 @@
+"""Multi-video comparison pipeline helpers."""
+
+import logging
+import re
+from typing import Any, Dict, List
+
+from pydantic import BaseModel, Field
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+
+from app.config import open_router_model
+from app.rag.retriever import (
+    build_self_query_retriever,
+    is_low_quality_text,
+)
+from app.rag.retrieval_helpers import (
+    build_focus_query,
+    keyword_match_docs,
+    merge_unique_docs,
+    rank_docs_for_query,
+    strip_time_phrases,
+)
+
+logger = logging.getLogger(__name__)
+
+COMPARISON_PROMPT = """
+You are ClipIQ's senior multi-video analyst.
+The user asked: {user_question}
+
+Use only the provided metadata and transcript evidence. Do not use external knowledge.
+
+METADATA_A:
+{metadata_a}
+
+METADATA_B:
+{metadata_b}
+
+VIDEO A EVIDENCE:
+{evidence_a}
+
+VIDEO B EVIDENCE:
+{evidence_b}
+
+MODE DIRECTIVE:
+{mode_directive}
+
+Rules:
+1) Write clean markdown that is easy to scan.
+2) Start with:
+## Dual Video Summary
+3) Then include:
+## Video A Snapshot
+## Video B Snapshot
+## Cross-Video Verdict
+4) If learning-context recommendation is enabled, include:
+## Recommendation
+with chosen video, reasons, and confidence/100.
+5) If study guidance is enabled, include:
+## Study Plan
+with 4-6 actionable bullets.
+6) For non-learning/entertainment context, DO NOT provide study plan and DO NOT provide learning recommendation.
+7) Use [mm:ss] references for concrete claims whenever available.
+8) If information is missing, state: Not found in video transcript or metadata.
+9) Keep concise but complete.
+"""
+
+INTENT_PROMPT = """
+You are classifying whether a dual-video request is in a learning/study context.
+
+USER QUESTION:
+{question}
+
+VIDEO A METADATA:
+{meta_a}
+
+VIDEO B METADATA:
+{meta_b}
+
+VIDEO A EVIDENCE PREVIEW:
+{evidence_a}
+
+VIDEO B EVIDENCE PREVIEW:
+{evidence_b}
+
+Return structured output only.
+is_learning_context=true only when user intent or content context is clearly educational/technical/tutorial/lecture/study-oriented.
+For entertainment/interview/game-show/general chat context, return false.
+{format_instructions}
+"""
+
+
+class CompareIntent(BaseModel):
+    is_learning_context: bool = Field(
+        description="Whether this compare request is truly in learning/study context."
+    )
+    reason: str = Field(
+        description="Short reasoning for the classification."
+    )
+
+
+def _metadata_block(meta: Dict[str, Any], stats: Dict[str, int]) -> str:
+    return (
+        f"video_id: {meta.get('video_id')}\n"
+        f"title: {meta.get('title')}\n"
+        f"channel: {meta.get('channel')}\n"
+        f"date: {meta.get('date')}\n"
+        f"description: {str(meta.get('description', ''))[:450]}\n"
+        f"evidence_kept: {stats.get('kept', 0)}\n"
+        f"evidence_dropped: {stats.get('dropped', 0)}"
+    )
+
+
+def _sec_to_mmss(sec: int) -> str:
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+def _format_evidence_with_links(docs, fallback_video_id: str):
+    """Format evidence and include clickable timestamp links."""
+    if not docs:
+        return "No transcript evidence found.", {"kept": 0, "dropped": 0}, []
+
+    kept = 0
+    dropped = 0
+    lines: List[str] = []
+    link_refs: List[Dict[str, str]] = []
+
+    for d in docs:
+        content = (d.page_content or "").strip().replace("\n", " ")
+        if is_low_quality_text(content):
+            dropped += 1
+            continue
+
+        start = int(d.metadata.get("start", 0))
+        ts = _sec_to_mmss(start)
+        video_id = str(d.metadata.get("video_id") or fallback_video_id or "")
+        if not video_id:
+            continue
+        link = f"https://youtu.be/{video_id}?t={start}s"
+        quote = content[:220] + "..." if len(content) > 220 else content
+        lines.append(f"- [{ts}]({link}) {quote}")
+        link_refs.append({"ts": ts, "link": link, "quote": quote})
+        kept += 1
+
+    if kept == 0:
+        return (
+            "No good transcript evidence found (most retrieved segments were low-quality).",
+            {"kept": 0, "dropped": dropped},
+            [],
+        )
+
+    return "\n".join(lines), {"kept": kept, "dropped": dropped}, link_refs
+
+
+def _classify_compare_intent(
+    question: str,
+    meta_a: Dict[str, Any],
+    meta_b: Dict[str, Any],
+    evidence_a_preview: str,
+    evidence_b_preview: str,
+) -> CompareIntent:
+    parser = PydanticOutputParser(pydantic_object=CompareIntent)
+    prompt = PromptTemplate(
+        template=INTENT_PROMPT,
+        input_variables=["question", "meta_a", "meta_b", "evidence_a", "evidence_b"],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+    chain = prompt | open_router_model | parser
+    try:
+        return chain.invoke(
+            {
+                "question": question,
+                "meta_a": str(meta_a)[:1000],
+                "meta_b": str(meta_b)[:1000],
+                "evidence_a": evidence_a_preview[:1200],
+                "evidence_b": evidence_b_preview[:1200],
+            }
+        )
+    except Exception as e:
+        logger.exception("Multi-video intent classification failed: %s", e)
+        # Safe fallback: no learning-mode assumptions.
+        return CompareIntent(is_learning_context=False, reason="fallback")
+
+
+def _build_evidence_links_section(
+    refs_a: List[Dict[str, str]],
+    refs_b: List[Dict[str, str]],
+) -> str:
+    lines: List[str] = ["## Evidence Links"]
+    if refs_a:
+        lines.append("### Video A")
+        for item in refs_a[:4]:
+            lines.append(f"- [{item['ts']}]({item['link']})")
+    if refs_b:
+        lines.append("### Video B")
+        for item in refs_b[:4]:
+            lines.append(f"- [{item['ts']}]({item['link']})")
+    return "\n".join(lines)
+
+
+def _retrieve_docs_for_video(proc: Dict[str, Any], question: str):
+    vectorstore = proc.get("vectorstore")
+    chunks = proc.get("chunks") or []
+    if vectorstore is None or not chunks:
+        return []
+
+    dynamic_k = int(proc.get("dynamic_k") or 5)
+    retrieval_k = max(6, dynamic_k + 1)
+    query = question.strip() or "video summary"
+
+    docs: List[Any] = []
+    try:
+        retr = build_self_query_retriever(vectorstore, retrieval_k)
+        docs = retr.invoke(query) or []
+    except Exception as e:
+        logger.exception("Multi-video self-query failed: %s", e)
+        docs = []
+
+    dense_query = strip_time_phrases(query) or query
+    focus_query = build_focus_query(chunks, dense_query)
+
+    dense_docs = []
+    focus_docs = []
+    try:
+        dense_docs = vectorstore.similarity_search(dense_query, k=retrieval_k)
+    except Exception:
+        dense_docs = []
+    try:
+        if focus_query and focus_query != dense_query:
+            focus_docs = vectorstore.similarity_search(
+                focus_query, k=min(retrieval_k + 2, 12)
+            )
+    except Exception:
+        focus_docs = []
+
+    lexical_docs = keyword_match_docs(
+        chunks=chunks,
+        query=query,
+        max_docs=max(4, retrieval_k),
+    )
+    lexical_focus_docs = keyword_match_docs(
+        chunks=chunks,
+        query=focus_query,
+        max_docs=max(3, retrieval_k // 2),
+    )
+
+    merged = merge_unique_docs(docs, dense_docs, focus_docs, lexical_docs, lexical_focus_docs)
+    good = [d for d in merged if not is_low_quality_text(d.page_content)]
+    if not good and merged:
+        good = merged
+    if not good:
+        return []
+
+    ranked = rank_docs_for_query(
+        good,
+        focus_query or dense_query or query,
+        max_docs=min(max(6, retrieval_k), 10),
+    )
+    return ranked or good[: min(max(6, retrieval_k), 10)]
+
+
+def run_multi_video_pipeline(
+    proc_a: Dict[str, Any],
+    proc_b: Dict[str, Any],
+    question: str,
+) -> Dict[str, Any]:
+    """Generate one comparison answer from two processed videos."""
+    meta_a = proc_a.get("metadata", {})
+    meta_b = proc_b.get("metadata", {})
+    video_id_a = str(meta_a.get("video_id") or "")
+    video_id_b = str(meta_b.get("video_id") or "")
+
+    docs_a = _retrieve_docs_for_video(proc_a, question)
+    docs_b = _retrieve_docs_for_video(proc_b, question)
+
+    evidence_a_text, stats_a, refs_a = _format_evidence_with_links(docs_a, video_id_a)
+    evidence_b_text, stats_b, refs_b = _format_evidence_with_links(docs_b, video_id_b)
+    intent = _classify_compare_intent(
+        question=question,
+        meta_a=meta_a,
+        meta_b=meta_b,
+        evidence_a_preview=evidence_a_text,
+        evidence_b_preview=evidence_b_text,
+    )
+    mode_directive = (
+        "This is LEARNING context: you may include Recommendation and Study Plan."
+        if intent.is_learning_context
+        else "This is NON-LEARNING context: do not include Study Plan and do not include learning recommendation."
+    )
+
+    prompt_text = COMPARISON_PROMPT.format(
+        user_question=question,
+        metadata_a=_metadata_block(meta_a, stats_a),
+        metadata_b=_metadata_block(meta_b, stats_b),
+        evidence_a=evidence_a_text,
+        evidence_b=evidence_b_text,
+        mode_directive=mode_directive,
+    )
+
+    res = open_router_model.invoke(prompt_text)
+    response_text = (res.content if hasattr(res, "content") else str(res)).strip()
+    if not re.search(r"(?im)^\s{0,3}##\s*Evidence Links\b", response_text):
+        evidence_links = _build_evidence_links_section(refs_a, refs_b)
+        if len(evidence_links.splitlines()) > 1:
+            response_text = f"{response_text}\n\n{evidence_links}".strip()
+    study_mode = bool(re.search(r"(?im)^\s{0,3}(?:##\s*)?Study\s+Plan\b", response_text))
+    return {
+        "response": response_text,
+        "study_mode": study_mode,
+        "video_a": meta_a,
+        "video_b": meta_b,
+    }

@@ -64,7 +64,7 @@ def get_response_policy(query: str, history: ChatMessageHistory) -> ResponsePoli
     - For specific segment explanation requests (explaining a quoted/pasted line or a concrete moment), set include_timestamps=true.
     - If the user asks for where/when/moment/timestamp/location-in-video, keep route=RAG and set include_timestamps=true.
     - If unclear, choose route=RAG and include_timestamps=false.
-    - retrieval_focus=PRECISE when the request asks for exact factual detail (for example explicit quantities, durations, exact figures, counts, dates, strict verification, or exact "how much/how long/for how many" style asks in any language).
+    - retrieval_focus=PRECISE when the request asks for exact factual detail (for example explicit quantities, durations, exact figures, counts, dates, strict verification, ordered/sequence facts, or exact "how much/how long/for how many" style asks in any language).
     - Otherwise retrieval_focus=GENERAL.
     - If the user asks for unrelated tasks outside this video (coding, debugging, math solving, translation, or general writing), choose route=CHAT.
     - use_history=true ONLY if the user explicitly refers to prior turns (for example: that/this/earlier/again/then with clear conversational reference).

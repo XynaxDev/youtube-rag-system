@@ -58,6 +58,7 @@ class CompareResponse(BaseModel):
     intent: str
     video_a: Optional[Dict[str, str]] = None
     video_b: Optional[Dict[str, str]] = None
+    study_mode: Optional[bool] = None
 
 
 class HealthResponse(BaseModel):

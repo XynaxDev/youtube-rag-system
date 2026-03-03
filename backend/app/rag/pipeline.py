@@ -1,6 +1,6 @@
-"""
+﻿"""
 Core RAG pipeline: video processing, single-video chat, comparison, summaries.
-Orchestrates transcript → chunks → embeddings → retrieval → LLM generation.
+Orchestrates transcript â†’ chunks â†’ embeddings â†’ retrieval â†’ LLM generation.
 """
 
 import logging
@@ -22,9 +22,9 @@ from app.rag.transcript import (
 from app.rag.retriever import (
     create_vectorstore_for_video,
     build_self_query_retriever,
-    format_evidence,
     is_low_quality_text,
 )
+from app.rag.multi_video_pipeline import run_multi_video_pipeline
 from app.rag.retrieval_helpers import (
     build_focus_query as _build_focus_query,
     doc_timestamp_candidates as _doc_timestamp_candidates,
@@ -39,14 +39,12 @@ from app.rag.retrieval_helpers import (
     strip_time_phrases as _strip_time_phrases,
 )
 from app.rag.policy_helpers import (
-    classify_answer_support,
-    ResponsePolicy,
     get_response_policy,
 )
 
 logger = logging.getLogger(__name__)
 
-# ─── In-memory session store ─────────────────────────────────
+# â”€â”€â”€ In-memory session store â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 sessions: Dict[str, dict] = {}
 
 
@@ -63,7 +61,7 @@ def get_or_create_session(session_id: Optional[str] = None) -> str:
     return new_id
 
 
-# ─── Intent Router ───────────────────────────────────────────
+# â”€â”€â”€ Intent Router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _normalize_summary_text(text: str) -> str:
     """Normalize summary to overview + 'Key Takeaways:' bullets."""
     if not text:
@@ -128,7 +126,7 @@ class SummaryPayload(BaseModel):
     )
 
 
-# ─── RAG Prompt ──────────────────────────────────────────────
+# â”€â”€â”€ RAG Prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 RAG_PROMPT = PromptTemplate(
     template="""
     You are a helpful YouTube AI assistant.
@@ -162,6 +160,7 @@ RAG_PROMPT = PromptTemplate(
     9. For timeline/duration questions, if wording differs but intent is adjacent (for example preparing/making/filming/production), use the closest directly supported timeline fact and explicitly state the exact evidence wording.
     10. If the question asks "how/why" and no directly related evidence exists even after adjacent-intent mapping, explicitly say the direct explanation is not stated.
     11. If the user asks for unrelated tasks (for example coding, debugging, math solving, translation, or writing outside this video), do not perform the task and respond with one short sentence only, without summarizing the video.
+    12. For ordered or verification questions (for example first/last/true/false claims), resolve using chronology in the evidence and explicitly match the asked person/subject before answering.
     """,
     input_variables=[
         "context",
@@ -199,52 +198,7 @@ CHAT_PROMPT = PromptTemplate(
     input_variables=["video_summary", "chat_history", "question"],
 )
 
-COMPARISON_PROMPT = """
-You are an expert YouTube comparison analyst. The user asked: {user_question}
-
-Before answering:
-- Inspect METADATA_A and METADATA_B and the provided evidence blocks.
-- For each video, INFER a short "Channel/Topic focus" from the title + description + channel name (1 short line). If uncertain, say "unknown".
-- Use ONLY the provided metadata and evidence. Do NOT use external knowledge.
-
-METADATA_A:
-{metadata_a}
-
-METADATA_B:
-{metadata_b}
-
-VIDEO A EVIDENCE (top retrieved chunks):
-{evidence_a}
-
-VIDEO B EVIDENCE (top retrieved chunks):
-{evidence_b}
-
-GUIDELINES:
-1) Start with a 1-3 sentence SHORT ANSWER that directly responds to the user's question.
-2) If user asked "which is better / which to study / which is more relevant":
-   - Provide a DECISION block with:
-     - preferred_video: A / B / TIE / INSUFFICIENT_DATA
-     - reasons: 3 concise bullets (at least one referencing metadata date or channel)
-     - evidence: 2 lines with [mm:ss] short quotes
-     - confidence: 0-100
-3) If user asked a factual question, answer strictly from evidence and include SOURCES with timestamps.
-4) ALWAYS mention missing or noisy transcripts and whether you relied on metadata only.
-5) Provide "Channel focus — Video A: ..." and "Channel focus — Video B: ..." near the top.
-6) If a video is judged educational (lecture/tutorial), include STUDY_TIPS for that video (4-6 actionable bullets). Otherwise omit study tips.
-7) Tie-break rules: evidence presence -> recency (metadata.date) -> channel authority.
-8) Do not hallucinate. If requested facts are not in evidence/metadata, say "Not found in video transcript or metadata."
-
-OUTPUT FORMAT:
-- Channel focus lines
-- SHORT ANSWER (1-3 sentences)
-- DECISION (if applicable)
-- SOURCES / EVIDENCE
-- STUDY_TIPS (if applicable)
-Keep responses concise and factual.
-"""
-
-
-# ─── Core Pipeline Functions ─────────────────────────────────
+# â”€â”€â”€ Core Pipeline Functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def process_video(session_id: str, video_url: str) -> dict:
     """Process a video: fetch metadata, transcript, chunk, embed, store."""
     session = sessions[session_id]
@@ -302,7 +256,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
     include_timestamps = policy.include_timestamps
     retrieval_focus = policy.retrieval_focus
     use_history = policy.use_history
-    is_precise = retrieval_focus == "PRECISE"
+    is_precise = retrieval_focus == "PRECISE" or include_timestamps
     # Precise factual queries should return a grounded timestamp source.
     include_timestamps = include_timestamps or is_precise
     logger.info(
@@ -446,11 +400,22 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         ranking_query,
         max_docs=min(max(6, retrieval_k), 10),
     ) or good_docs[: min(max(6, retrieval_k), 10)]
+    if is_precise:
+        numeric_docs = [
+            d for d in good_docs
+            if re.search(r"\d", d.page_content or "")
+        ]
+        precise_docs = _rank_docs_for_query(
+            numeric_docs,
+            ranking_query,
+            max_docs=min(max(4, retrieval_k // 2), 8),
+        )
+        seed_docs = _merge_unique_docs(seed_docs, precise_docs)
 
     expanded_docs = _expand_with_temporal_neighbors(
         seed_docs=seed_docs,
         all_chunks=processed["chunks"],
-        radius=1 if not is_precise else 2,
+        radius=1 if not is_precise else 3,
         max_docs=max(14, retrieval_k * 2),
     )
 
@@ -506,12 +471,6 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         history.add_user_message(message)
         history.add_ai_message(result)
 
-        support = classify_answer_support(
-            question=message,
-            answer=result,
-            video_summary=metadata.get("title", "this video"),
-        )
-
         # Return one grounded timestamp source for RAG answers when evidence exists.
         # CHAT/SUMMARY routes still return no sources.
         sources = []
@@ -536,7 +495,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
                 chosen_ts = mentioned_ts
         else:
             chosen_ts = evidence_ts
-        should_emit_source = bool(candidate_docs) and support.status == "SUPPORTED"
+        should_emit_source = bool(candidate_docs)
         if should_emit_source:
             sources = [{"timestamp": int(chosen_ts), "video_id": video_id}]
 
@@ -583,81 +542,41 @@ def summarize_video(session_id: str, video_url: str) -> dict:
 
 
 def compare_videos(session_id: str, url1: str, url2: str, question: str) -> dict:
-    """Compare two videos using RAG evidence and metadata."""
+    """Compare two videos using the dedicated multi-video pipeline."""
     session = sessions[session_id]
     history = session["history"]
 
     proc_a = process_video(session_id, url1)
     proc_b = process_video(session_id, url2)
 
-    meta_a, meta_b = proc_a["metadata"], proc_b["metadata"]
-    vs_a, vs_b = proc_a["vectorstore"], proc_b["vectorstore"]
+    vs_a = proc_a["vectorstore"]
+    vs_b = proc_b["vectorstore"]
 
     if vs_a is None and vs_b is None:
         return {
             "response": "Transcripts missing for both videos. Cannot compare.",
             "intent": "ERROR",
+            "study_mode": False,
         }
-
-    # Retrieve evidence from both
-    evidence_a_text = "No evidence available."
-    evidence_b_text = "No evidence available."
-
-    if vs_a:
-        retr_a = build_self_query_retriever(vs_a, proc_a["dynamic_k"] or 5)
-        try:
-            docs_a = retr_a.invoke(question)
-            evidence_a_text, _ = format_evidence(docs_a)
-        except Exception:
-            pass
-
-    if vs_b:
-        retr_b = build_self_query_retriever(vs_b, proc_b["dynamic_k"] or 5)
-        try:
-            docs_b = retr_b.invoke(question)
-            evidence_b_text, _ = format_evidence(docs_b)
-        except Exception:
-            pass
-
-    metadata_a_str = (
-        f"video_id: {meta_a.get('video_id')}\n"
-        f"title: {meta_a.get('title')}\n"
-        f"channel: {meta_a.get('channel')}\n"
-        f"date: {meta_a.get('date')}\n"
-        f"description: {meta_a.get('description', '')[:400]}"
-    )
-    metadata_b_str = (
-        f"video_id: {meta_b.get('video_id')}\n"
-        f"title: {meta_b.get('title')}\n"
-        f"channel: {meta_b.get('channel')}\n"
-        f"date: {meta_b.get('date')}\n"
-        f"description: {meta_b.get('description', '')[:400]}"
-    )
-
-    prompt_text = COMPARISON_PROMPT.format(
-        user_question=question,
-        metadata_a=metadata_a_str,
-        metadata_b=metadata_b_str,
-        evidence_a=evidence_a_text,
-        evidence_b=evidence_b_text,
-    )
 
     try:
-        res = open_router_model.invoke(prompt_text)
+        result = run_multi_video_pipeline(proc_a, proc_b, question)
+        response_text = result["response"]
         history.add_user_message(question)
-        history.add_ai_message(res.content)
+        history.add_ai_message(response_text)
         return {
-            "response": res.content,
+            "response": response_text,
             "intent": "COMPARE",
-            "video_a": meta_a,
-            "video_b": meta_b,
+            "video_a": result["video_a"],
+            "video_b": result["video_b"],
+            "study_mode": result["study_mode"],
         }
     except Exception as e:
-        logger.exception("Comparison failed: %s", e)
-        return {"response": "Error during comparison.", "intent": "ERROR"}
+        logger.exception("Multi-video comparison failed: %s", e)
+        return {"response": "Error during comparison.", "intent": "ERROR", "study_mode": False}
 
 
-# ─── Internal helpers ─────────────────────────────────────────
+# â”€â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _get_universal_summary(chunks, metadata) -> str:
     MAX_CHARS = 500000
     total_text = " ".join([c.page_content for c in chunks])
