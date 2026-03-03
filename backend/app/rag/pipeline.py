@@ -47,8 +47,13 @@ from app.rag.policy_helpers import (
 
 logger = logging.getLogger(__name__)
 
-# â”€â”€â”€ In-memory session store â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  In-memory session store 
 sessions: Dict[str, dict] = {}
+
+
+def _format_mmss(seconds: int) -> str:
+    clamped = max(0, int(seconds))
+    return f"{clamped // 60}:{clamped % 60:02d}"
 
 
 def get_or_create_session(session_id: Optional[str] = None) -> str:
@@ -64,7 +69,7 @@ def get_or_create_session(session_id: Optional[str] = None) -> str:
     return new_id
 
 
-# â”€â”€â”€ Intent Router â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  Intent Router 
 def _normalize_summary_text(text: str) -> str:
     """Normalize summary to overview + 'Key Takeaways:' bullets."""
     if not text:
@@ -129,7 +134,7 @@ class SummaryPayload(BaseModel):
     )
 
 
-# â”€â”€â”€ RAG Prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  RAG Prompt 
 RAG_PROMPT = PromptTemplate(
     template="""
     You are a helpful YouTube AI assistant.
@@ -164,6 +169,7 @@ RAG_PROMPT = PromptTemplate(
     10. If the question asks "how/why" and no directly related evidence exists even after adjacent-intent mapping, explicitly say the direct explanation is not stated.
     11. If the user asks for unrelated tasks (for example coding, debugging, math solving, translation, or writing outside this video), do not perform the task and respond with one short sentence only, without summarizing the video.
     12. For ordered or verification questions (for example first/last/true/false claims), resolve using chronology in the evidence and explicitly match the asked person/subject before answering.
+    13. If the user asks for a time beyond the available transcript range, clearly say it is out of range and do not provide any timestamp.
     """,
     input_variables=[
         "context",
@@ -202,7 +208,7 @@ CHAT_PROMPT = PromptTemplate(
 )
 
 
-# â”€â”€â”€ Core Pipeline Functions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  Core Pipeline Functions 
 def process_video(session_id: str, video_url: str) -> dict:
     """Process a video: fetch metadata, transcript, chunk, embed, store."""
     session = sessions[session_id]
@@ -263,12 +269,28 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
     is_precise = retrieval_focus == "PRECISE" or include_timestamps
     # Precise factual queries should return a grounded timestamp source.
     include_timestamps = include_timestamps or is_precise
+
+    max_transcript_second = 0
+    for chunk in chunks:
+        start = int(chunk.metadata.get("start", 0) or 0)
+        end = int(chunk.metadata.get("end", start) or start)
+        max_transcript_second = max(max_transcript_second, start, end)
+    explicit_time_seconds = _extract_time_seconds(message)
+    is_time_out_of_range = bool(
+        explicit_time_seconds is not None
+        and max_transcript_second > 0
+        and explicit_time_seconds > max_transcript_second + 3
+    )
+    if is_time_out_of_range:
+        include_timestamps = False
+
     logger.info(
-        "Detected policy: route=%s include_timestamps=%s retrieval_focus=%s use_history=%s",
+        "Detected policy: route=%s include_timestamps=%s retrieval_focus=%s use_history=%s out_of_range_time=%s",
         intent,
         include_timestamps,
         retrieval_focus,
         use_history,
+        is_time_out_of_range,
     )
 
     if intent == "SUMMARY":
@@ -366,9 +388,9 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
     )
 
     # Time-aware supplemental retrieval: add a time-window search when timestamp response is requested.
-    time_seconds = _extract_time_seconds(message)
+    time_seconds = explicit_time_seconds
     time_docs = []
-    if include_timestamps and time_seconds is not None:
+    if include_timestamps and time_seconds is not None and not is_time_out_of_range:
         time_docs = _fetch_time_window_docs(
             vectorstore=vectorstore,
             base_query=dense_query or "video context",
@@ -449,12 +471,18 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         timestamp = int(primary_doc.metadata.get("start", 0))
     else:
         timestamp = 0
-    timestamp_guidance = (
-        "Include one relevant timestamp naturally in the answer using evidence-grounded mm:ss format. "
-        "Do not invent timestamps, and do not append links or source footer."
-        if include_timestamps
-        else "Do not include timestamps, links, or source footer."
-    )
+    if is_time_out_of_range and explicit_time_seconds is not None:
+        timestamp_guidance = (
+            f"User asked for {_format_mmss(explicit_time_seconds)}, but available transcript range is 0:00 to {_format_mmss(max_transcript_second)}. "
+            "State that the requested time is out of range. Do not include timestamps, links, or source footer."
+        )
+    else:
+        timestamp_guidance = (
+            "Include one relevant timestamp naturally in the answer using evidence-grounded mm:ss format. "
+            "Do not invent timestamps, and do not append links or source footer."
+            if include_timestamps
+            else "Do not include timestamps, links, or source footer."
+        )
     precision_guidance = (
         "User requests precise factual detail. Prefer exact values and directly supported figures from evidence. "
         "Only say 'not covered' after checking all provided evidence for explicit facts."
@@ -501,7 +529,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
                 chosen_ts = mentioned_ts
         else:
             chosen_ts = evidence_ts
-        should_emit_source = bool(candidate_docs)
+        should_emit_source = bool(candidate_docs) and include_timestamps and not is_time_out_of_range
         if should_emit_source:
             sources = [{"timestamp": int(chosen_ts), "video_id": video_id}]
 
@@ -548,7 +576,12 @@ def summarize_video(session_id: str, video_url: str) -> dict:
 
 
 def compare_videos(
-    session_id: str, url1: str, url2: str, question: str, study_mode: bool = False
+    session_id: str,
+    url1: str,
+    url2: str,
+    question: str,
+    study_mode: bool = False,
+    is_chat: Optional[bool] = None,
 ) -> dict:
     """Compare two videos using the dedicated multi-video pipeline."""
     session = sessions[session_id]
@@ -568,9 +601,9 @@ def compare_videos(
         }
 
     try:
-        is_chat = len(history.messages) > 0
+        is_chat_mode = is_chat if is_chat is not None else len(history.messages) > 0
         result = run_multi_video_pipeline(
-            proc_a, proc_b, question, study_mode=study_mode, is_chat=is_chat
+            proc_a, proc_b, question, study_mode=study_mode, is_chat=is_chat_mode
         )
         response_text = result["response"]
         history.add_user_message(question)
@@ -598,7 +631,7 @@ def check_technical_videos(session_id: str, url1: str, url2: str) -> bool:
     return check_technical_videos_internal(proc_a, proc_b)
 
 
-# â”€â”€â”€ Internal helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+#  Internal helpers 
 def _get_universal_summary(chunks, metadata) -> str:
     MAX_CHARS = 500000
     total_text = " ".join([c.page_content for c in chunks])

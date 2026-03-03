@@ -23,6 +23,18 @@ from app.rag.retrieval_helpers import (
 
 logger = logging.getLogger(__name__)
 
+STRICT_STUDY_MODE_DIRECTIVE = """
+STRICT STUDY MODE ENABLED:
+- Use an industry-grade technical analysis style.
+- Prioritize concept depth, architecture/process reasoning, trade-offs, and practical implications.
+- Use clear markdown sections and concise technical language.
+- Include:
+  1) a technical verdict,
+  2) a confidence score (/100),
+  3) a concrete study plan with actionable next steps.
+- Do not output fluff or generic motivation language.
+"""
+
 COMPARISON_PROMPT = """
 You are ClipIQ's senior multi-video analyst.
 The user asked: {user_question}
@@ -59,7 +71,8 @@ with chosen video, reasons, and confidence/100.
 ## Study Plan
 with 4-6 actionable bullets.
 6) For non-learning/entertainment context, DO NOT provide study plan and DO NOT provide learning recommendation.
-7) Use [mm:ss] references for concrete claims whenever available.
+7) Use inline timestamp links for concrete claims whenever available in this exact format:
+   [m:ss](https://youtu.be/<video_id>?t=<seconds>s)
 8) If information is missing, state: Not found in video transcript or metadata.
 9) Keep concise but complete.
 """
@@ -83,18 +96,25 @@ VIDEO B EVIDENCE:
 MODE DIRECTIVE:
 {mode_directive}
 
+QUERY SCOPE:
+{query_scope}
+
 Rules:
 1) Answer the specific question directly based ONLY on the evidence provided above. Do NOT write a generic summary or snapshot.
 2) Use clean, easy-to-read markdown.
-3) If comparing or discussing both videos, clearly state which video the information comes from using bold headers:
+2.1) Never use section headers like "Dual Video Summary", "Video A Snapshot", "Video B Snapshot", "Cross-Video Verdict", or "Recommendation".
+3) When query_scope is VIDEO_A_ONLY, answer only from Video A evidence.
+4) When query_scope is VIDEO_B_ONLY, answer only from Video B evidence.
+5) When query_scope is BOTH, answer with two short blocks in this exact order:
    **Video A [{title_a}]**
-   [Details...]
-   
    **Video B [{title_b}]**
-   [Details...]
-4) Always include specific timestamps [mm:ss] inline when referencing key moments or quotes.
-5) If the information is only present in one video, answer based on that video and explicitly mention it.
-6) Be conversational but technically precise and grounded in facts.
+6) For each grounded claim, use one inline timestamp link in this exact format:
+   [m:ss](https://youtu.be/<video_id>?t=<seconds>s)
+   Never output plain [m:ss] without a link.
+7) If information is missing in a requested video, explicitly say:
+   "That is not discussed here in this video."
+   Then add one short suggestion grounded in metadata/title.
+8) Be conversational but factual and concise.
 """
 
 INTENT_PROMPT = """
@@ -127,6 +147,37 @@ class CompareIntent(BaseModel):
         description="Whether this compare request is truly in learning/study context."
     )
     reason: str = Field(description="Short reasoning for the classification.")
+
+
+def _detect_query_scope(question: str) -> str:
+    q = (question or "").lower()
+    mentions_a = bool(
+        re.search(
+            r"\bvideo\s*a\b|\bvdo\s*a\b|\bstream\s*a\b|first\s+video|1st\s+video", q
+        )
+    )
+    mentions_b = bool(
+        re.search(
+            r"\bvideo\s*b\b|\bvdo\s*b\b|\bstream\s*b\b|second\s+video|2nd\s+video", q
+        )
+    )
+    if mentions_a and not mentions_b:
+        return "VIDEO_A_ONLY"
+    if mentions_b and not mentions_a:
+        return "VIDEO_B_ONLY"
+    return "BOTH"
+
+
+def _suggestion_from_meta(meta: Dict[str, Any]) -> str:
+    title = str(meta.get("title") or "this video").strip()
+    short_title = title[:80].rstrip()
+    if short_title:
+        return f"You can ask about {short_title}."
+    return "You can ask about the main discussion in this video."
+
+
+def _not_discussed_message(meta: Dict[str, Any]) -> str:
+    return f"That is not discussed here in this video. {_suggestion_from_meta(meta)}"
 
 
 def _metadata_block(meta: Dict[str, Any], stats: Dict[str, int]) -> str:
@@ -303,12 +354,50 @@ def run_multi_video_pipeline(
     meta_b = proc_b.get("metadata", {})
     video_id_a = str(meta_a.get("video_id") or "")
     video_id_b = str(meta_b.get("video_id") or "")
+    query_scope = _detect_query_scope(question) if is_chat else "BOTH"
 
     docs_a = _retrieve_docs_for_video(proc_a, question)
     docs_b = _retrieve_docs_for_video(proc_b, question)
 
+    if is_chat:
+        if query_scope == "VIDEO_A_ONLY" and not docs_a:
+            response_text = _not_discussed_message(meta_a)
+            return {
+                "response": response_text,
+                "study_mode": False,
+                "video_a": meta_a,
+                "video_b": meta_b,
+            }
+        if query_scope == "VIDEO_B_ONLY" and not docs_b:
+            response_text = _not_discussed_message(meta_b)
+            return {
+                "response": response_text,
+                "study_mode": False,
+                "video_a": meta_a,
+                "video_b": meta_b,
+            }
+        if query_scope == "BOTH" and not docs_a and not docs_b:
+            response_text = (
+                f"**Video A [{meta_a.get('title', 'Video A')}]**\n"
+                f"{_not_discussed_message(meta_a)}\n\n"
+                f"**Video B [{meta_b.get('title', 'Video B')}]**\n"
+                f"{_not_discussed_message(meta_b)}"
+            )
+            return {
+                "response": response_text,
+                "study_mode": False,
+                "video_a": meta_a,
+                "video_b": meta_b,
+            }
+
     evidence_a_text, stats_a, refs_a = _format_evidence_with_links(docs_a, video_id_a)
     evidence_b_text, stats_b, refs_b = _format_evidence_with_links(docs_b, video_id_b)
+
+    if is_chat and query_scope == "VIDEO_A_ONLY":
+        evidence_b_text = "Not requested by user."
+    elif is_chat and query_scope == "VIDEO_B_ONLY":
+        evidence_a_text = "Not requested by user."
+
     intent = _classify_compare_intent(
         question=question,
         meta_a=meta_a,
@@ -318,7 +407,7 @@ def run_multi_video_pipeline(
     )
 
     if study_mode:
-        mode_directive = "STRICT STUDY MODE: You must provide a deeply technical and analytical comparison. Go deep into specifics, code, theories, or advanced concepts. ALWAYS include a detailed Study Plan with actionable steps, and a conclusive Recommendation section. Do not output fluff."
+        mode_directive = STRICT_STUDY_MODE_DIRECTIVE.strip()
     else:
         mode_directive = (
             "This is LEARNING context: you may include Recommendation and Study Plan."
@@ -336,6 +425,7 @@ def run_multi_video_pipeline(
         mode_directive=mode_directive,
         title_a=meta_a.get("title", "Video A"),
         title_b=meta_b.get("title", "Video B"),
+        query_scope=query_scope,
     )
 
     res = open_router_model.invoke(prompt_text)
@@ -343,12 +433,6 @@ def run_multi_video_pipeline(
     if not is_chat and not re.search(
         r"(?im)^\s{0,3}##\s*Evidence Links\b", response_text
     ):
-        evidence_links = _build_evidence_links_section(refs_a, refs_b)
-        if len(evidence_links.splitlines()) > 1:
-            response_text = f"{response_text}\n\n{evidence_links}".strip()
-
-    # If it's chat, append the evidence references explicitly at the end so parseEvidence picks them up
-    if is_chat:
         evidence_links = _build_evidence_links_section(refs_a, refs_b)
         if len(evidence_links.splitlines()) > 1:
             response_text = f"{response_text}\n\n{evidence_links}".strip()

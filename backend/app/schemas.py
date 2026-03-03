@@ -28,6 +28,7 @@ class CompareRequest(BaseModel):
     url2: str
     question: str = "Compare both videos and tell me which one is better for learning."
     study_mode: bool = False
+    is_chat: Optional[bool] = None
 
 
 class CheckTechnicalRequest(BaseModel):

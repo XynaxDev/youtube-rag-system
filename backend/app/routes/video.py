@@ -91,7 +91,14 @@ async def compare_endpoint(req: CompareRequest):
     """Compare two videos using RAG evidence and metadata."""
     try:
         get_or_create_session(req.session_id)
-        result = compare_videos(req.session_id, req.url1, req.url2, req.question)
+        result = compare_videos(
+            req.session_id,
+            req.url1,
+            req.url2,
+            req.question,
+            req.study_mode,
+            req.is_chat,
+        )
         return CompareResponse(**result)
     except Exception as e:
         logger.exception("Error comparing videos: %s", e)
