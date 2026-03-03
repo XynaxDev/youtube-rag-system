@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Link2, ArrowRight, Sparkles, AlertCircle, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useLenis } from "lenis/react";
 import { cn } from "../lib/utils";
 import { processVideo, summarizeVideo } from "../lib/api";
 import { saveHistory } from "../lib/history";
@@ -71,6 +72,23 @@ export function Summarize() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const navigate = useNavigate();
+  const lenis = useLenis();
+
+  // Summarize content sits near viewport height; keep Lenis bounds fresh on state/layout changes.
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      lenis?.resize();
+    });
+  }, [lenis, isAnalyzing, error, status]);
+
+  useEffect(() => {
+    if (!("fonts" in document)) return;
+    (document as Document & { fonts: FontFaceSet }).fonts.ready.then(() => {
+      requestAnimationFrame(() => {
+        lenis?.resize();
+      });
+    });
+  }, [lenis]);
 
   const handleSummarize = async (e: FormEvent) => {
     e.preventDefault();
@@ -101,6 +119,7 @@ export function Summarize() {
         date: processResult.date,
         description: processResult.description,
         summary: summaryResult.summary,
+        starterQuestions: summaryResult.starter_questions || [],
         chunkCount: processResult.chunk_count,
       };
 
@@ -122,11 +141,11 @@ export function Summarize() {
   };
 
   return (
-    <div className="w-full bg-[#050505] selection:bg-blue-500/30 relative pb-[72px] overflow-x-hidden">
+    <div className="w-full bg-[#050505] selection:bg-blue-500/30 relative pb-[72px] md:pb-0 overflow-hidden">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-blue-600/5 blur-[120px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-600/5 blur-[120px] pointer-events-none" />
 
-      <div className="flex flex-col items-center lg:justify-center p-4 md:p-6 lg:p-10 pt-4 md:pt-6">
+      <div className="flex flex-col items-center p-4 md:p-6 lg:p-10 pt-4 md:pt-6 pb-20 md:pb-0">
 
         <motion.div
           initial={{ opacity: 0, y: 30 }}
@@ -224,7 +243,7 @@ export function Summarize() {
             </motion.div>
           )}
 
-          <p className="text-[10px] text-gray-700 mt-20 font-bold uppercase tracking-widest opacity-30">
+          <p className="text-[10px] text-gray-700 mt-20 md:mt-8 font-bold uppercase tracking-widest opacity-30">
             ClipIQ Intelligence System • Verified Reasoning
           </p>
         </motion.div>

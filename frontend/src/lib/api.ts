@@ -33,6 +33,7 @@ export interface SummaryResponse {
     date: string;
     description: string;
   };
+  starter_questions: string[];
 }
 
 export interface CompareResponse {

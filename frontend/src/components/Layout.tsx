@@ -21,7 +21,12 @@ export function Layout() {
 
   return (
     <>
-      <div className="hidden md:flex bg-[#050505] text-white h-[100dvh] overflow-hidden relative">
+      <div
+        className={cn(
+          "hidden md:flex bg-[#050505] text-white relative overflow-x-hidden",
+          isSummaryResultRoute ? "h-[100dvh] overflow-y-hidden" : "min-h-[100dvh] overflow-y-visible"
+        )}
+      >
         <motion.div
           animate={{ width: isCollapsed ? 80 : 260 }}
           transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
@@ -32,8 +37,10 @@ export function Layout() {
         </div>
         <main
           className={cn(
-            "flex-1 min-w-0 h-full relative",
-            isSummaryResultRoute ? "overflow-y-auto overflow-x-hidden" : "overflow-hidden"
+            "flex-1 min-w-0 relative",
+            isSummaryResultRoute
+              ? "h-full overflow-y-auto overflow-x-hidden"
+              : "min-h-[100dvh] overflow-visible"
           )}
         >
           <Outlet />

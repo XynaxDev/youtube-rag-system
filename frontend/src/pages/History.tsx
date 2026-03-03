@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { Clock, FileText, Scale, Trash2, Edit2, Check, X, ArrowUpRight, Search, Zap, AlertCircle } from "lucide-react";
+import { Clock, Scale, Trash2, Edit2, Check, X, ArrowUpRight, Search, Zap, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getHistory, clearHistory, deleteHistoryItem, renameHistoryItem, HistoryItem } from "../lib/history";
 import { cn } from "../lib/utils";
+import { useToast } from "../components/GlobalToast";
 
 const container = {
     hidden: { opacity: 0 },
@@ -22,6 +23,7 @@ export function History() {
     const [items, setItems] = useState<HistoryItem[]>([]);
     const [showConfirmClear, setShowConfirmClear] = useState(false);
     const navigate = useNavigate();
+    const { showToast } = useToast();
 
     useEffect(() => {
         setItems(getHistory());
@@ -40,6 +42,7 @@ export function History() {
         clearHistory();
         setItems([]);
         setShowConfirmClear(false);
+        showToast("History cleared", "success");
     };
 
     const handleDelete = (id: string, e: React.MouseEvent) => {
@@ -47,6 +50,7 @@ export function History() {
         deleteHistoryItem(id);
         const updated = getHistory();
         setItems(updated);
+        showToast("Entry deleted", "success");
     };
 
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -68,6 +72,7 @@ export function History() {
         if (editValue.trim()) {
             renameHistoryItem(id, editValue.trim());
             setItems(getHistory());
+            showToast("Title updated", "success");
         }
         setEditingId(null);
     };
@@ -166,11 +171,11 @@ export function History() {
 
                                         <div className="flex items-center gap-4 md:gap-6 flex-1 min-w-0 relative z-10">
                                             <div className={cn(
-                                                "w-10 h-10 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center border shrink-0 transition-all duration-700 group-hover:rotate-[10deg] shadow-lg",
-                                                item.type === "Summary" ? "bg-blue-500/10 border-blue-500/20" : "bg-purple-500/10 border-purple-500/20"
+                                                "w-10 h-10 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center border shrink-0 transition-all duration-300 group-hover:scale-105 shadow-lg",
+                                                item.type === "Summary" ? "bg-transparent border-transparent" : "bg-purple-500/10 border-purple-500/20"
                                             )}>
                                                 {item.type === "Summary" ? (
-                                                    <FileText className="w-5 h-5 md:w-7 md:h-7 text-blue-400" />
+                                                    <img src="/ytlogo.svg" alt="YouTube" className="w-8 h-8 md:w-12 md:h-12 object-contain" />
                                                 ) : (
                                                     <Scale className="w-5 h-5 md:w-7 md:h-7 text-purple-400" />
                                                 )}
@@ -245,3 +250,4 @@ export function History() {
         </div>
     );
 }
+

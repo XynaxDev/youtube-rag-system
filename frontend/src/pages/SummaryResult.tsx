@@ -16,7 +16,6 @@ import {
   User,
   ArrowLeft,
   Share2,
-  XCircle,
   AlertCircle,
   Globe
 } from "lucide-react";
@@ -27,18 +26,14 @@ import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "../lib/utils";
 import { chatWithVideo } from "../lib/api";
+import { useToast } from "../components/GlobalToast";
 
 interface ChatMessage {
   id: string;
   role: "user" | "ai";
   content: string;
   createdAt?: number;
-}
-
-interface Toast {
-  id: string;
-  message: string;
-  type: "success" | "error";
+  sources?: Array<{ timestamp: number; video_id: string }>;
 }
 
 /* ---------- Tooltip helpers ---------- */
@@ -47,10 +42,6 @@ function Tooltip({ text, children, align = "center" }: { text: string; children:
     align === "right" ? "right-0" :
       align === "center" ? "left-1/2 -translate-x-1/2" :
         "left-0";
-  const arrowClass =
-    align === "right" ? "right-4" :
-      align === "center" ? "left-1/2 -translate-x-1/2" :
-        "left-4";
 
   return (
     <div className="group relative flex items-center justify-center">
@@ -60,7 +51,6 @@ function Tooltip({ text, children, align = "center" }: { text: string; children:
         posClass
       )}>
         {text}
-        <div className={cn("absolute top-full border-[6px] border-transparent border-t-[#0f1115]", arrowClass)} />
       </div>
     </div>
   );
@@ -71,10 +61,6 @@ function TooltipBelow({ text, children, align = "left" }: { text: string; childr
     align === "right" ? "right-0" :
       align === "center" ? "left-1/2 -translate-x-1/2" :
         "left-0";
-  const arrowClass =
-    align === "right" ? "right-4" :
-      align === "center" ? "left-1/2 -translate-x-1/2" :
-        "left-4";
 
   return (
     <div className="group relative flex items-center justify-center">
@@ -84,7 +70,6 @@ function TooltipBelow({ text, children, align = "left" }: { text: string; childr
         posClass
       )}>
         {text}
-        <div className={cn("absolute bottom-full border-[6px] border-transparent border-b-[#0f1115]", arrowClass)} />
       </div>
     </div>
   );
@@ -102,29 +87,188 @@ const hideScrollbarCSS = `
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 `;
 const makeMessageId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+const CHAT_HISTORY_WINDOW_SIZE = 6;
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 258000;
+
+const estimateTokens = (text: string) => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return 0;
+  return Math.ceil(normalized.length / 4);
+};
+
+const ACCURACY_NOTE = "ClipIQ can make mistakes. Verify important details from official sources.";
+
+const normalizeSummaryMarkdown = (text: string) => {
+  const base = (text || "").trim();
+  if (!base) return "Transmission data corrupted.";
+
+  const withoutLabel = base.replace(
+    /^\s*(?:[*_`>#\-\s]*)?(?:summary)\s*[:\-]\s*/i,
+    "",
+  ).trimStart();
+
+  const hasTakeaways = /(^|\n)\s*(?:[*_`>#\-\s]*)?key\s+takeaways\s*:/i.test(withoutLabel);
+  if (hasTakeaways) return withoutLabel;
+
+  const sentences = withoutLabel
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sentences.length <= 1) return withoutLabel;
+
+  const overview = sentences.slice(0, 5).join(" ");
+  const bulletPool = (sentences.slice(5).length ? sentences.slice(5) : sentences.slice(1)).slice(0, 5);
+  if (bulletPool.length === 0) return overview;
+
+  const bullets = bulletPool.map((line) => `* ${line}`).join("\n");
+  return `${overview}\n\nKey Takeaways:\n${bullets}`;
+};
+
+interface ContextWindowMeterProps {
+  usedTokens: number;
+  projectedTokens: number;
+  totalTokens: number;
+  retainedMessages: number;
+  droppedMessages: number;
+  historyLimit: number;
+}
+
+function ContextWindowMeter({
+  usedTokens,
+  projectedTokens,
+  totalTokens,
+  retainedMessages,
+  droppedMessages,
+  historyLimit,
+}: ContextWindowMeterProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const closeOnOutside = (event: MouseEvent | TouchEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutside);
+    document.addEventListener("touchstart", closeOnOutside);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutside);
+      document.removeEventListener("touchstart", closeOnOutside);
+    };
+  }, []);
+
+  const safeTotal = Math.max(totalTokens, 1);
+  const usedPct = Math.min(100, (usedTokens / safeTotal) * 100);
+  const leftPct = Math.max(0, 100 - usedPct);
+  const projectedPct = Math.min(100, (projectedTokens / safeTotal) * 100);
+  const visualPct = usedPct > 0 ? Math.max(usedPct, 1.5) : 0;
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative shrink-0 self-center flex items-center justify-center"
+      onMouseEnter={() => {
+        if (window.innerWidth >= 1024) setOpen(true);
+      }}
+      onMouseLeave={() => {
+        if (window.innerWidth >= 1024) setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Context window usage"
+        onClick={() => setOpen((prev) => !prev)}
+        className="relative w-8 h-8 rounded-full border border-white/20 bg-[#0c0f15] hover:border-blue-500/40 transition-all"
+      >
+        <span
+          className="absolute inset-[3px] rounded-full"
+          style={{
+            background: `conic-gradient(rgba(59,130,246,0.95) ${visualPct}%, rgba(255,255,255,0.14) ${visualPct}% 100%)`,
+          }}
+        />
+        <span className="absolute inset-[7px] rounded-full bg-[#090b10] border border-white/10 flex items-center justify-center text-[7px] font-bold text-blue-200">
+          {Math.round(usedPct)}%
+        </span>
+      </button>
+
+      <div
+        className={cn(
+          "absolute bottom-full right-0 mb-3 w-[246px] rounded-2xl border border-white/15 bg-[#12141b]/95 backdrop-blur-xl px-3.5 py-3 shadow-2xl z-[260] transition-all duration-200",
+          open ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-1 pointer-events-none"
+        )}
+      >
+        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1.5">Context Window</div>
+        <div className="text-[13px] font-bold text-white">{Math.round(usedPct)}% used ({Math.round(leftPct)}% left)</div>
+        <div className="mt-1 text-[12px] text-gray-300">{usedTokens.toLocaleString()} / {safeTotal.toLocaleString()} tokens</div>
+        <div className="mt-2.5 h-px bg-white/10" />
+        <div className="mt-2 text-[11px] text-gray-300">Projected with input: <span className="text-blue-300 font-semibold">{Math.round(projectedPct)}%</span></div>
+        <div className="mt-1 text-[11px] text-gray-400">History kept: {retainedMessages}/{historyLimit} messages</div>
+        <div className="mt-1 text-[11px] text-gray-400">History dropped: {droppedMessages}</div>
+      </div>
+    </div>
+  );
+}
+function ThinkingLine({ compact = false }: { compact?: boolean }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="w-full py-1"
+    >
+      <div className="flex items-center gap-2.5 md:gap-3">
+        <Sparkles className={cn("text-blue-400/90", compact ? "w-4 h-4" : "w-5 h-5")} />
+        <span
+          className={cn(
+            "thinking-shimmer font-semibold tracking-wide bg-clip-text text-transparent",
+            compact ? "text-[14px]" : "text-[15px] md:text-[16px]",
+          )}
+        >
+          Thinking...
+        </span>
+      </div>
+    </motion.div>
+  );
+}
 
 export function SummaryResult() {
   const navigate = useNavigate();
   const location = useLocation();
   const state = location.state as any;
+  const initialTab: "summary" | "chat" = state?.initialTab === "chat" ? "chat" : "summary";
 
-  const [activeTab, setActiveTab] = useState<"summary" | "chat">("summary");
+  const [activeTab, setActiveTab] = useState<"summary" | "chat">(initialTab);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const { showToast } = useToast();
 
   const mobileChatEndRef = useRef<HTMLDivElement>(null);
   const desktopChatEndRef = useRef<HTMLDivElement>(null);
   const mobileChatScrollRef = useRef<HTMLDivElement>(null);
   const desktopChatScrollRef = useRef<HTMLDivElement>(null);
   const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 1024);
+  const parsedContextWindow = Number(import.meta.env.VITE_CONTEXT_WINDOW_TOKENS);
+  const contextWindowTokens =
+    Number.isFinite(parsedContextWindow) && parsedContextWindow > 0
+      ? parsedContextWindow
+      : DEFAULT_CONTEXT_WINDOW_TOKENS;
+
+  const finalizedMessages = chatMessages.filter((msg) => msg.content !== "thinking...");
+  const retainedMessages = finalizedMessages.slice(-CHAT_HISTORY_WINDOW_SIZE);
+  const usedContextTokens = estimateTokens(retainedMessages.map((msg) => msg.content).join("\n"));
+  const projectedContextTokens = usedContextTokens + estimateTokens(chatInput);
+  const droppedHistoryMessages = Math.max(0, finalizedMessages.length - CHAT_HISTORY_WINDOW_SIZE);
 
   useEffect(() => {
     const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab, state?.sessionId]);
   const playerRef = useRef<any>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
@@ -138,17 +282,22 @@ export function SummaryResult() {
     return time.replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
   };
 
-  const extractTimestamps = (content: string) => {
-    const matches = Array.from(content.matchAll(/t=(\d+)s?/g));
-    return [...new Set(matches.map(m => parseInt(m[1], 10)))];
-  };
+  const extractTimestamps = (
+    content: string,
+    sources?: Array<{ timestamp: number; video_id: string }>
+  ) => {
+    const sourceTimestamps = (sources || [])
+      .map((source) => Number(source.timestamp))
+      .filter((value) => Number.isFinite(value) && value >= 0);
 
-  const showToast = (message: string, type: "success" | "error") => {
-    const id = Math.random().toString(36).substr(2, 9);
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3000);
+    if (sourceTimestamps.length > 0) {
+      const unique = [...new Set(sourceTimestamps)];
+      return unique.length ? [unique[0]] : [];
+    }
+
+    const matches = Array.from(content.matchAll(/t=(\d+)s?/g));
+    const unique = [...new Set(matches.map((m) => parseInt(m[1], 10)))];
+    return unique.length ? [unique[0]] : [];
   };
 
   const handleSeek = (seconds: number) => {
@@ -196,7 +345,12 @@ export function SummaryResult() {
     );
   }
 
-  const { sessionId, videoUrl, videoId, title, channel, date, summary, chunkCount } = state || {};
+  const { sessionId, videoUrl, videoId, title, channel, date, summary, chunkCount, starterQuestions } = state || {};
+  const summaryMarkdown = normalizeSummaryMarkdown(summary || "Transmission data corrupted.");
+  const starterQuestionsForVideo =
+    Array.isArray(starterQuestions) && starterQuestions.length > 0
+      ? starterQuestions.slice(0, 3)
+      : [];
 
   const handleCopy = async () => {
     try {
@@ -225,19 +379,20 @@ export function SummaryResult() {
     try {
       const result = await chatWithVideo(sessionId, videoUrl, userMessage);
       const aiResponse = result.response;
+      const responseSources = result.sources || [];
 
       setChatMessages((prev) => {
         return prev.map((msg) =>
           msg.id === aiMsgId
-            ? { ...msg, content: aiResponse, createdAt: Date.now() }
+            ? { ...msg, content: aiResponse, sources: responseSources, createdAt: Date.now() }
             : msg
         );
       });
 
-      // AUTO-SEEK DETECTION: Look for the first timestamp in the response
-      const timeMatch = aiResponse.match(/[\?&]t=(\d+)s?/);
-      if (timeMatch && timeMatch[1]) {
-        const seconds = parseInt(timeMatch[1], 10);
+      // Prefer structured source timestamps; keep regex fallback for older responses.
+      const timestamps = extractTimestamps(aiResponse, responseSources);
+      if (timestamps.length > 0) {
+        const seconds = timestamps[0];
         // Force seek immediately for better UX
         if (playerRef.current) {
           playerRef.current.seekTo(seconds, 'seconds');
@@ -272,29 +427,6 @@ export function SummaryResult() {
       <style>{hideScrollbarCSS}</style>
 
       <div className="w-full h-full flex flex-col bg-[#050505] text-white selection:bg-blue-500/30 font-sans relative pb-[72px] lg:pb-0 overflow-x-hidden">
-
-        {/* Toast Notification System */}
-        <div className="fixed top-8 left-1/2 -translate-x-1/2 z-[1000] flex flex-col gap-3 pointer-events-none">
-          <AnimatePresence>
-            {toasts.map((toast) => (
-              <motion.div
-                key={toast.id}
-                initial={{ opacity: 0, y: -20, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-                className={cn(
-                  "px-6 py-3.5 rounded-2xl flex items-center gap-3 backdrop-blur-2xl shadow-2xl border min-w-[300px]",
-                  toast.type === "success"
-                    ? "bg-green-500/10 border-green-500/20 text-green-400"
-                    : "bg-red-500/10 border-red-500/20 text-red-400"
-                )}
-              >
-                {toast.type === "success" ? <Check className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
-                <span className="text-sm font-bold tracking-tight">{toast.message}</span>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
 
         {/* Top Header (Sticky) */}
         <div className="sticky top-0 z-[150] shrink-0 bg-[#050505]/80 backdrop-blur-xl px-4 md:px-6 py-3 md:py-4 flex items-center justify-between border-b border-white/5">
@@ -371,7 +503,7 @@ export function SummaryResult() {
             </div>
 
             {/* Tab Switcher - Sticky at Top (Under Header) on Mobile */}
-            <div className="sticky top-[58px] z-[120] -mx-4 px-4 py-3 bg-[#050505]/90 backdrop-blur-xl shadow-xl">
+            <div className="sticky top-[58px] z-[120] -mx-4 px-4 py-3 bg-[#050505]/90 backdrop-blur-xl">
               <div className="flex gap-2 bg-white/[0.04] border border-white/10 p-1 rounded-2xl">
                 <button
                   onClick={() => setActiveTab("summary")}
@@ -398,7 +530,11 @@ export function SummaryResult() {
 
             {/* Tab Content - natural height for summary, fixed for chat */}
             {activeTab === "summary" ? (
-              <div className="bg-[#0f1115] rounded-2xl border border-white/5 p-4">
+              <div
+                data-lenis-prevent
+                className="bg-[#0f1115] rounded-2xl border border-white/5 p-4 h-[calc(100dvh-300px)] min-h-[460px] overflow-y-auto overscroll-y-contain custom-scrollbar"
+                style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
+              >
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-white/5">
                   <div>
                     <h3 className="text-sm font-serif italic text-blue-400 font-bold">Executive Intelligence Summary</h3>
@@ -417,18 +553,24 @@ export function SummaryResult() {
                       h1: ({ children }) => <h1 className="text-white font-bold text-xl mt-6 mb-3 font-serif">{children}</h1>,
                       h2: ({ children }) => <h2 className="text-white font-bold text-lg mt-5 mb-2 font-serif">{children}</h2>,
                       h3: ({ children }) => <h3 className="text-blue-300 font-bold text-base mt-4 mb-2 font-serif italic">{children}</h3>,
-                      p: ({ children }) => <p className="mb-4 text-gray-300 leading-relaxed">{children}</p>,
+                      p: ({ children }) => {
+                        const text = typeof children === "string" ? children : "";
+                        if (/^key takeaways:?$/i.test(text.trim())) {
+                          return <h3 className="text-white font-bold text-base mt-7 mb-3">{text}</h3>;
+                        }
+                        return <p className="mb-4 text-gray-300 leading-relaxed">{children}</p>;
+                      },
                       strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
                       ul: ({ children }) => <ul className="mb-6 list-none p-0 space-y-2">{children}</ul>,
                       ol: ({ children }) => <ol className="mb-6 list-none p-0 space-y-2">{children}</ol>,
                       li: ({ children }) => {
-                        const isHeader = typeof children === 'string' && (children.startsWith('Key Takeaways') || children.startsWith('Summary'));
+                        const isHeader = typeof children === "string" && /^key takeaways:?$/i.test(children.trim());
                         return (
                           <li className={cn("flex gap-3 items-start", isHeader && "mt-6 mb-3")}>
                             {!isHeader && <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-1" />}
                             <span className={cn(
                               "leading-relaxed text-gray-300",
-                              isHeader && "text-white font-bold text-lg font-serif italic"
+                              isHeader && "text-white font-bold text-sm font-serif italic"
                             )}>{children}</span>
                           </li>
                         );
@@ -450,15 +592,18 @@ export function SummaryResult() {
                       },
                     }}
                   >
-                    {summary || "Transmission data corrupted."}
+                    {summaryMarkdown}
                   </ReactMarkdown>
                 </div>
+                <p className="mt-2 text-[10px] text-gray-500 leading-relaxed">
+                  {ACCURACY_NOTE}
+                </p>
               </div>
             ) : (
               /* Chat: fixed tall container so input is always visible */
               <div
                 className="bg-[#070707] rounded-3xl border border-white/5 flex flex-col overflow-hidden relative"
-                style={{ height: isDesktop ? 'auto' : 'calc(100vh - 400px)', minHeight: '400px', touchAction: "pan-y" }}
+                style={{ height: isDesktop ? 'auto' : 'calc(100dvh - 340px)', minHeight: '440px', touchAction: "pan-y" }}
               >
                 <div className="absolute top-0 right-0 w-32 h-32 bg-blue-600/[0.05] blur-[50px] pointer-events-none" />
                 {/* Messages scroll area */}
@@ -469,41 +614,46 @@ export function SummaryResult() {
                   style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
                 >
                   {chatMessages.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-center py-10 opacity-40">
-                      <MessageSquare className="w-10 h-10 mb-4 text-blue-500/30" />
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-600">Equipped & Ready</p>
-                      <div className="flex flex-wrap gap-2 mt-4 justify-center">
-                        {["Summarize this", "Key points", "Conclusion"].map((q) => (
-                          <button key={q} onClick={() => handleSendChat(q)}
-                            className="px-4 py-2 bg-white/5 border border-white/10 text-[10px] font-bold text-gray-400 rounded-full active:scale-95">{q}</button>
-                        ))}
-                      </div>
+                    <div className="h-full flex flex-col items-center justify-center text-center py-10">
+                      <div className="w-14 h-14 aspect-square rounded-2xl border border-blue-500/30 bg-blue-500/10 flex items-center justify-center mb-4 shadow-[0_0_40px_rgba(59,130,246,0.15)]"><MessageSquare className="w-7 h-7 text-blue-400" /></div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-blue-300">ClipIQ Interface Ready</p><p className="text-[10px] text-gray-500 mt-2 max-w-[260px] leading-relaxed">Ask for timestamps, key moments, and scene-level insights.</p>
+                      {starterQuestionsForVideo.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 mt-5 justify-center">
+                          {starterQuestionsForVideo.map((q) => (
+                            <button key={q} onClick={() => handleSendChat(q)}
+                              className="px-4 py-2 bg-white/5 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500 text-[10px] font-bold text-gray-300 hover:text-white rounded-full active:scale-95 transition-all disabled:opacity-50"
+                              disabled={isSending}>{q}</button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-5 text-[10px] text-gray-600 uppercase tracking-widest">Generating starter prompts...</div>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-8 pb-6">
-                      {chatMessages.map((msg) => (
-                        <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} key={msg.id}
-                          className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}>
+                      {chatMessages.map((msg) => {
+                        const isThinking = msg.role === "ai" && msg.content === "thinking...";
+                        const timestamps = extractTimestamps(msg.content, msg.sources);
+                        if (isThinking) {
+                          return <ThinkingLine key={msg.id} compact />;
+                        }
+
+                        return (
+                          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} key={msg.id}
+                            className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}>
                           {msg.role === "ai" && (
                             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/5 border border-white/10 flex items-center justify-center mr-3 mt-1 shrink-0 shadow-lg">
                               <Sparkles className="w-4 h-4 text-blue-400" />
                             </div>
                           )}
-                          <div className={cn("flex flex-col max-w-[92%] min-w-0 gap-2", msg.role === "user" ? "items-end ml-auto" : "items-start")}>
+                          <div className={cn("flex flex-col min-w-0 gap-2", msg.role === "user" ? "max-w-[50%] items-end ml-auto" : "max-w-[92%] items-start")}>
                             <div className={cn(
                               "px-5 py-4 rounded-[1.25rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
                               msg.role === "user"
                                 ? "bg-blue-600 text-white rounded-tr-none font-medium text-[14px]"
                                 : "bg-[#111113] border border-white/10 text-gray-200 rounded-tl-none text-[14px] leading-relaxed"
                             )}>
-                              {msg.content === "thinking..." ? (
-                                <div className="flex items-center gap-1.5 h-4 px-1">
-                                  <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.2, repeat: Infinity }} className="w-1 h-1 rounded-full bg-blue-400" />
-                                  <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }} className="w-1 h-1 rounded-full bg-blue-400" />
-                                  <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }} className="w-1 h-1 rounded-full bg-blue-400" />
-                                </div>
-                              ) : (
-                                <div className="prose prose-invert prose-sm max-w-none">
+                              <div className="prose prose-invert prose-sm max-w-none">
                                   <ReactMarkdown
                                     components={{
                                       p: ({ children }) => <p className="m-0">{children}</p>,
@@ -552,12 +702,12 @@ export function SummaryResult() {
                                     }}
                                   >
                                     {msg.content
+                                      .replace(/^\s*Source:\s*$/gim, "")
                                       .replace(/\[https?:\/\/youtu\.be\/[^\s\]]+\]/g, "")
                                       .replace(/https?:\/\/youtu\.be\/[^\s\]]+/g, "")
                                       .replace(/(?<!\]\()(https?:\/\/[^\s]+)/g, "[$1]($1)")}
                                   </ReactMarkdown>
-                                </div>
-                              )}
+                              </div>
                             </div>
                             {msg.role === "ai" && msg.content !== "thinking..." && (
                               <div className="flex items-center gap-2 mt-2 ml-1">
@@ -574,11 +724,11 @@ export function SummaryResult() {
                                 </Tooltip>
                                 <div className="h-3 w-px bg-white/10 mx-px" />
                                 <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
-                                {extractTimestamps(msg.content).length > 0 && (
+                                {timestamps.length > 0 && (
                                   <>
                                     <div className="h-3 w-px bg-white/10 mx-px" />
                                     <div className="flex flex-wrap gap-1.5">
-                                      {extractTimestamps(msg.content).map((seconds, idx) => {
+                                      {timestamps.map((seconds, idx) => {
                                         const mins = Math.floor(seconds / 60);
                                         const s = seconds % 60;
                                         const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
@@ -607,14 +757,15 @@ export function SummaryResult() {
                             )
                           }
                         </motion.div>
-                      ))}
+                        );
+                      })}
                       <div ref={mobileChatEndRef} />
                     </div>
                   )}
                 </div>
                 {/* Chat Input - always visible at bottom */}
                 <div className="shrink-0 p-3 md:p-4 bg-transparent">
-                  <div className="w-full mx-auto relative flex items-end gap-2 bg-white/[0.04] border border-white/10 rounded-[1.25rem] px-3 focus-within:border-blue-500/40 transition-all shadow-inner p-1.5">
+                  <div className="w-full mx-auto relative flex items-center gap-2 bg-white/[0.04] border border-white/10 rounded-[1.25rem] px-3 focus-within:border-blue-500/40 transition-all shadow-inner p-1.5">
                     <textarea
                       data-lenis-prevent
                       value={chatInput}
@@ -632,14 +783,25 @@ export function SummaryResult() {
                       }}
                       placeholder="Ask anything..."
                       rows={1}
-                      className="flex-1 bg-transparent border-none outline-none py-2 text-[14px] leading-relaxed text-white placeholder:text-gray-700 focus:ring-0 resize-none max-h-[100px] overflow-y-auto touch-auto"
+                      className="flex-1 self-end bg-transparent border-none outline-none py-2 text-[14px] leading-relaxed text-white placeholder:text-gray-700 focus:ring-0 resize-none max-h-[100px] overflow-y-auto touch-auto"
                       disabled={isSending}
                     />
-                    <button onClick={handleSendChat} disabled={!chatInput.trim() || isSending}
-                      className="w-8 h-8 flex items-center justify-center bg-blue-600/80 text-white rounded-full disabled:opacity-20 active:scale-95 shrink-0 shadow-lg mb-0.5">
+                    <ContextWindowMeter
+                      usedTokens={usedContextTokens}
+                      projectedTokens={projectedContextTokens}
+                      totalTokens={contextWindowTokens}
+                      retainedMessages={retainedMessages.length}
+                      droppedMessages={droppedHistoryMessages}
+                      historyLimit={CHAT_HISTORY_WINDOW_SIZE}
+                    />
+                    <button onClick={() => handleSendChat()} disabled={!chatInput.trim() || isSending}
+                      className="w-8 h-8 flex items-center justify-center bg-blue-600/80 text-white rounded-full disabled:opacity-20 active:scale-95 shrink-0 shadow-lg self-center">
                       <Send className="w-3.5 h-3.5 fill-white text-white" />
                     </button>
                   </div>
+                  <p className="mt-2 px-1 text-center text-[10px] text-gray-500 leading-relaxed">
+                    {ACCURACY_NOTE}
+                  </p>
                 </div>
               </div>
             )}
@@ -789,7 +951,9 @@ export function SummaryResult() {
                       initial={{ opacity: 0, x: -20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: 10 }}
+                      data-lenis-prevent
                       className="h-full w-full overflow-y-auto overflow-x-hidden custom-scrollbar overscroll-contain"
+                      style={{ touchAction: "pan-y", WebkitOverflowScrolling: "touch" }}
                     >
                       <div className="p-5 md:p-8 lg:p-14 w-full">
                         <div className="flex items-center justify-between mb-6 pb-5 border-b border-white/5">
@@ -817,7 +981,13 @@ export function SummaryResult() {
                               h1: ({ children }) => <h1 className="text-white font-bold text-xl md:text-2xl mt-8 mb-3 font-serif">{children}</h1>,
                               h2: ({ children }) => <h2 className="text-white font-bold text-lg md:text-xl mt-6 mb-3 font-serif">{children}</h2>,
                               h3: ({ children }) => <h3 className="text-blue-300 font-bold text-base md:text-lg mt-5 mb-2 font-serif italic">{children}</h3>,
-                              p: ({ children }) => <p className="mb-4 text-gray-300 text-[14px] md:text-[15px] leading-[1.8]">{children}</p>,
+                              p: ({ children }) => {
+                                const text = typeof children === "string" ? children : "";
+                                if (/^key takeaways:?$/i.test(text.trim())) {
+                                  return <h3 className="text-white font-bold text-xl md:text-2xl mt-8 mb-4">{text}</h3>;
+                                }
+                                return <p className="mb-4 text-gray-300 text-[14px] md:text-[15px] leading-[1.8]">{children}</p>;
+                              },
                               strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
                               ul: ({ children }) => <ul className="mb-6 list-none p-0 space-y-2">{children}</ul>,
                               li: ({ children }) => {
@@ -825,7 +995,7 @@ export function SummaryResult() {
                                   ? children.map(c => typeof c === 'string' ? c : '').join('')
                                   : typeof children === 'string' ? children : '';
 
-                                const isHeader = /^(summary|key takeaways):/i.test(text.trim());
+                                const isHeader = /^key takeaways:?$/i.test(text.trim());
 
                                 return (
                                   <li className={cn("flex gap-3 items-start", isHeader ? "mt-12 mb-6 block w-full" : "mb-3")}>
@@ -860,9 +1030,12 @@ export function SummaryResult() {
                               },
                             }}
                           >
-                            {summary || "Transmission data corrupted."}
+                            {summaryMarkdown}
                           </ReactMarkdown>
                         </div>
+                        <p className="mt-1 text-[11px] text-gray-500 leading-relaxed">
+                          {ACCURACY_NOTE}
+                        </p>
                       </div>
                     </motion.div>
                   ) : (
@@ -881,37 +1054,44 @@ export function SummaryResult() {
                         style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
                       >
                         {chatMessages.length === 0 ? (
-                          <div className="h-full flex flex-col items-center justify-center text-center py-20 opacity-30 cursor-default">
-                            <MessageSquare className="w-16 h-16 mb-6 text-blue-500/20" />
+                          <div className="h-full flex flex-col items-center justify-center text-center py-20 cursor-default">
+                            <div className="w-20 h-20 aspect-square rounded-3xl border border-blue-500/30 bg-blue-500/10 flex items-center justify-center mb-6 shadow-[0_0_60px_rgba(59,130,246,0.2)]"><MessageSquare className="w-10 h-10 text-blue-400" /></div>
                             <h4 className="text-xl font-bold mb-3 font-display tracking-widest text-white uppercase">ClipIQ Interface Ready</h4>
-                            <p className="text-[10px] max-w-[250px] font-bold uppercase tracking-[0.3em] text-gray-600 mb-8">Ask about specific timestamps, context, or hidden insights</p>
+                            <p className="text-[10px] max-w-[330px] font-bold uppercase tracking-[0.24em] text-blue-300/90 mb-3">Ask about specific timestamps, context, or hidden insights</p><p className="text-xs text-gray-500 mb-8">Try a precise query like: "What happens at 10:00?"</p>
 
-                            <div className="flex flex-wrap items-center justify-center gap-2 max-w-lg px-4">
-                              {[
-                                "Give me a direct summary.",
-                                "What are the main arguments?",
-                                "Explain the conclusion.",
-                                "What's the best takeaway?"
-                              ].map((q) => (
-                                <button
-                                  key={q}
-                                  onClick={() => handleSendChat(q)}
-                                  className="px-4 py-2 bg-white/5 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500 text-[10px] md:text-xs font-bold text-gray-400 hover:text-white rounded-full transition-all active:scale-95"
-                                >
-                                  {q}
-                                </button>
-                              ))}
-                            </div>
+                            {starterQuestionsForVideo.length > 0 ? (
+                              <div className="flex flex-wrap items-center justify-center gap-2 max-w-lg px-4">
+                                {starterQuestionsForVideo.map((q) => (
+                                  <button
+                                    key={q}
+                                    onClick={() => handleSendChat(q)}
+                                    className="px-4 py-2 bg-white/5 hover:bg-blue-600/20 border border-white/10 hover:border-blue-500 text-[10px] md:text-xs font-bold text-gray-400 hover:text-white rounded-full transition-all active:scale-95 disabled:opacity-50"
+                                    disabled={isSending}
+                                  >
+                                    {q}
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-gray-600 uppercase tracking-widest mt-2">Generating starter prompts...</div>
+                            )}
                           </div>
                         ) : (
                           <div className="space-y-10 pb-20">
-                            {chatMessages.map((msg) => (
-                              <motion.div
-                                initial={{ opacity: 0, y: 30, scale: 0.98 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                key={msg.id}
-                                className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}
-                              >
+                            {chatMessages.map((msg) => {
+                              const isThinking = msg.role === "ai" && msg.content === "thinking...";
+                              const timestamps = extractTimestamps(msg.content, msg.sources);
+                              if (isThinking) {
+                                return <ThinkingLine key={msg.id} />;
+                              }
+
+                              return (
+                                <motion.div
+                                  initial={{ opacity: 0, y: 30, scale: 0.98 }}
+                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  key={msg.id}
+                                  className={cn("flex w-full group/msg", msg.role === "user" ? "justify-end" : "justify-start")}
+                                >
                                 {msg.role === "user" ? (
                                   <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-blue-600/20 border border-blue-500/20 flex items-center justify-center ml-4 md:ml-5 mt-1 shrink-0 shadow-lg order-2 group-hover/msg:border-blue-500/40 transition-colors">
                                     <User className="w-5 h-5 md:w-6 md:h-6 text-blue-400" />
@@ -922,8 +1102,10 @@ export function SummaryResult() {
                                   </div>
                                 )}
                                 <div className={cn(
-                                  "flex flex-col max-w-[90%] lg:max-w-[85%] min-w-0 gap-2 w-fit",
-                                  msg.role === "user" ? "items-end" : "items-start"
+                                  "flex flex-col min-w-0 gap-2 w-fit",
+                                  msg.role === "user"
+                                    ? "max-w-[50%] items-end"
+                                    : "max-w-[90%] lg:max-w-[85%] items-start"
                                 )}>
                                   <div className={cn(
                                     "px-5 py-4 rounded-[1.5rem] md:rounded-[2rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
@@ -931,14 +1113,7 @@ export function SummaryResult() {
                                       ? "bg-blue-600 text-white rounded-tr-none font-medium text-[13px] md:text-[14px]"
                                       : "bg-[#0f1115] border border-white/10 text-gray-300 rounded-tl-none text-[13px] md:text-[14px] leading-relaxed"
                                   )}>
-                                    {msg.content === "thinking..." ? (
-                                      <div className="flex items-center gap-1 md:gap-1.5 h-4 px-1">
-                                        <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.2, repeat: Infinity }} className="w-0.5 md:w-1 h-0.5 md:h-1 rounded-full bg-blue-400" />
-                                        <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.2, repeat: Infinity, delay: 0.2 }} className="w-0.5 md:w-1 h-0.5 md:h-1 rounded-full bg-blue-400" />
-                                        <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }} transition={{ duration: 1.2, repeat: Infinity, delay: 0.4 }} className="w-0.5 md:w-1 h-0.5 md:h-1 rounded-full bg-blue-400" />
-                                      </div>
-                                    ) : (
-                                      <div className="prose prose-invert max-w-none">
+                                    <div className="prose prose-invert max-w-none">
                                         <ReactMarkdown
                                           components={{
                                             h1: ({ children }) => <h1 className="text-white font-bold text-lg md:text-xl mt-4 mb-2 font-serif">{children}</h1>,
@@ -995,56 +1170,57 @@ export function SummaryResult() {
                                         >
                                           {msg.content
                                             .replace(/Source(?:\s*link)?:\s*/gi, "")
+                                            .replace(/^\s*Source:\s*$/gim, "")
                                             .replace(/\[https?:\/\/youtu\.be\/[^\s\]]+\]/g, "")
                                             .replace(/https?:\/\/youtu\.be\/[^\s\]]+/g, "")
                                             .replace(/(?<!\]\()(https?:\/\/[^\s]+)/g, "[$1]($1)")}
                                         </ReactMarkdown>
-                                      </div>
-                                    )}
-                                    {msg.role === "ai" && msg.content !== "thinking..." && (
-                                      <div className="flex items-center gap-3 mt-2.5 ml-1">
-                                        <Tooltip text="Copy response" align="left">
-                                          <button
-                                            onClick={() => {
-                                              navigator.clipboard.writeText(msg.content);
-                                              showToast("Copied to clipboard", "success");
-                                            }}
-                                            className="p-1.5 text-gray-500 hover:text-white transition-colors"
-                                          >
-                                            <Copy className="w-3.5 h-3.5" />
-                                          </button>
-                                        </Tooltip>
-                                        <div className="h-3 w-px bg-white/10 mx-px" />
-                                        <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
-                                        {extractTimestamps(msg.content).length > 0 && (
-                                          <>
-                                            <div className="h-3 w-px bg-white/10 mx-px" />
-                                            <div className="flex flex-wrap gap-2">
-                                              {extractTimestamps(msg.content).map((seconds, idx) => {
-                                                const mins = Math.floor(seconds / 60);
-                                                const s = seconds % 60;
-                                                const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
-                                                return (
-                                                  <Tooltip key={idx} text={`Seek to ${timeStr}`} align="left">
-                                                    <button
-                                                      onClick={() => handleSeek(seconds)}
-                                                      className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600/10 border border-blue-500/30 rounded-lg text-blue-400 font-mono text-[10px] font-bold hover:bg-blue-600/20 active:scale-95 transition-all shadow-sm"
-                                                    >
-                                                      <Play className="w-2.5 h-2.5 fill-current" />
-                                                      {timeStr}
-                                                    </button>
-                                                  </Tooltip>
-                                                );
-                                              })}
-                                            </div>
-                                          </>
-                                        )}
-                                      </div>
-                                    )}
+                                    </div>
                                   </div>
+                                  {msg.role === "ai" && msg.content !== "thinking..." && (
+                                    <div className="flex items-center gap-3 mt-2.5 ml-1">
+                                      <Tooltip text="Copy response" align="left">
+                                        <button
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(msg.content);
+                                            showToast("Copied to clipboard", "success");
+                                          }}
+                                          className="p-1.5 text-gray-500 hover:text-white transition-colors"
+                                        >
+                                          <Copy className="w-3.5 h-3.5" />
+                                        </button>
+                                      </Tooltip>
+                                      <div className="h-3 w-px bg-white/10 mx-px" />
+                                      <span className="text-[10px] font-mono font-bold tracking-wide text-gray-400">{formatClockTime(msg.createdAt)}</span>
+                                      {timestamps.length > 0 && (
+                                        <>
+                                          <div className="h-3 w-px bg-white/10 mx-px" />
+                                          <div className="flex flex-wrap gap-2">
+                                            {timestamps.map((seconds, idx) => {
+                                              const mins = Math.floor(seconds / 60);
+                                              const s = seconds % 60;
+                                              const timeStr = `${mins}:${s.toString().padStart(2, '0')}`;
+                                              return (
+                                                <Tooltip key={idx} text={`Seek to ${timeStr}`} align="left">
+                                                  <button
+                                                    onClick={() => handleSeek(seconds)}
+                                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-blue-600/10 border border-blue-500/30 rounded-lg text-blue-400 font-mono text-[10px] font-bold hover:bg-blue-600/20 active:scale-95 transition-all shadow-sm"
+                                                  >
+                                                    <Play className="w-2.5 h-2.5 fill-current" />
+                                                    {timeStr}
+                                                  </button>
+                                                </Tooltip>
+                                              );
+                                            })}
+                                          </div>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               </motion.div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                         <div ref={desktopChatEndRef} className="h-4 md:h-8 shrink-0" />
@@ -1052,7 +1228,7 @@ export function SummaryResult() {
 
                       {/* Chat Input Area */}
                       <div className="shrink-0 px-6 pb-4 md:px-8 md:pb-6 lg:px-10 lg:pb-8 relative z-10 w-full mt-auto">
-                        <div className="max-w-4xl mx-auto relative flex items-end gap-2 bg-white/[0.03] border border-white/10 rounded-[1.5rem] transition-all p-2 md:p-2.5 focus-within:border-blue-500/40 focus-within:bg-white/[0.05]">
+                        <div className="max-w-4xl mx-auto relative flex items-center gap-2 bg-white/[0.03] border border-white/10 rounded-[1.5rem] transition-all p-2 md:p-2.5 focus-within:border-blue-500/40 focus-within:bg-white/[0.05]">
                           <textarea
                             data-lenis-prevent
                             value={chatInput}
@@ -1070,17 +1246,28 @@ export function SummaryResult() {
                             }}
                             placeholder="Ask anything..."
                             rows={1}
-                            className="flex-1 bg-transparent border-none outline-none py-2 md:py-2.5 text-[14px] leading-relaxed text-white placeholder:text-gray-700 w-full focus:ring-0 resize-none max-h-[120px] custom-scrollbar px-2 overflow-y-auto touch-auto"
+                            className="flex-1 self-end bg-transparent border-none outline-none py-2 md:py-2.5 text-[14px] leading-relaxed text-white placeholder:text-gray-700 w-full focus:ring-0 resize-none max-h-[120px] custom-scrollbar px-2 overflow-y-auto touch-auto"
                             disabled={isSending}
                           />
+                          <ContextWindowMeter
+                            usedTokens={usedContextTokens}
+                            projectedTokens={projectedContextTokens}
+                            totalTokens={contextWindowTokens}
+                            retainedMessages={retainedMessages.length}
+                            droppedMessages={droppedHistoryMessages}
+                            historyLimit={CHAT_HISTORY_WINDOW_SIZE}
+                          />
                           <button
-                            onClick={handleSendChat}
+                            onClick={() => handleSendChat()}
                             disabled={!chatInput.trim() || isSending}
-                            className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center bg-blue-600/80 text-white rounded-full disabled:opacity-20 hover:bg-blue-600 transition-all shrink-0 shadow-lg mb-0.5"
+                            className="w-8 h-8 flex items-center justify-center bg-blue-600/80 text-white rounded-full disabled:opacity-20 hover:bg-blue-600 transition-all shrink-0 shadow-lg self-center"
                           >
                             <Send className="w-3.5 h-3.5 md:w-4 md:h-4 text-white fill-white" />
                           </button>
                         </div>
+                        <p className="mx-auto mt-2 max-w-4xl px-1 text-center text-[10px] text-gray-500 leading-relaxed">
+                          {ACCURACY_NOTE}
+                        </p>
                       </div>
                     </motion.div>
                   )}
@@ -1093,3 +1280,5 @@ export function SummaryResult() {
     </>
   );
 }
+
+

@@ -115,14 +115,14 @@ export function Dashboard() {
                     <div className="flex items-center gap-4 md:gap-6 min-w-0">
                       <div className={cn(
                         "w-12 h-12 md:w-14 md:h-14 rounded-xl md:rounded-2xl flex items-center justify-center border shrink-0 transition-transform duration-500 group-hover:scale-110",
-                        item.type === "Summary" ? "bg-blue-500/10 border-blue-500/20" : "bg-purple-500/10 border-purple-500/20"
+                        item.type === "Summary" ? "bg-transparent border-transparent" : "bg-purple-500/10 border-purple-500/20"
                       )}>
-                        {item.type === "Summary" ? <FileText className="w-5 h-5 md:w-6 md:h-6 text-blue-400" /> : <Scale className="w-5 h-5 md:w-6 md:h-6 text-purple-400" />}
+                        {item.type === "Summary" ? <img src="/ytlogo.svg" alt="YouTube" className="w-8 h-8 md:w-10 md:h-10 object-contain" /> : <Scale className="w-5 h-5 md:w-6 md:h-6 text-purple-400" />}
                       </div>
                       <div className="min-w-0">
                         <h4 className="font-bold text-sm md:text-lg mb-1 truncate group-hover:text-blue-400 transition-colors pr-2 leading-tight">{item.title}</h4>
                         <div className="flex items-center gap-2 text-[8px] md:text-[10px] font-bold uppercase tracking-widest">
-                          <span className="text-gray-500 bg-white/5 px-2 py-0.5 rounded border border-white/5">{item.channel}</span>
+                          <span className="text-gray-500">{item.channel}</span>
                           <span className={cn(
                             "px-2 py-0.5 rounded border border-white/5",
                             item.type === "Summary" ? "text-blue-500" : "text-purple-500"
@@ -148,3 +148,4 @@ export function Dashboard() {
     </div>
   );
 }
+
