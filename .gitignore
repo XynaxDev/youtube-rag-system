@@ -17,8 +17,7 @@ frontend/dist/
 clipiq/node_modules/
 
 # ─── Ollama / ChromaDB ───────────────
-chroma_db/
-*.sqlite3
+backend/.chroma_db/
 
 # ─── IDE ──────────────────────────────
 .vscode/
