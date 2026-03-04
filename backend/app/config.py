@@ -15,6 +15,11 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "arcee-ai/trinity-large-preview
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN", "")
 OLLAMA_EMBEDDING_MODEL = os.getenv("OLLAMA_EMBEDDING_MODEL", "bge-m3")
+CHROMA_PERSIST_DIR = os.getenv(
+    "CHROMA_PERSIST_DIR",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".chroma_db")),
+)
+os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 
 # ─── OpenRouter LLM (primary model for RAG, routing, comparison) ─────
 open_router_model = init_chat_model(

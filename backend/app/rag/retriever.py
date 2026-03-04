@@ -3,6 +3,7 @@ Vector store creation and self-query retriever setup.
 """
 
 import re
+import math
 import logging
 from typing import List, Optional, Dict, Tuple
 
@@ -15,7 +16,7 @@ from langchain_classic.chains.query_constructor.base import (
 )
 from langchain_community.query_constructors.chroma import ChromaTranslator
 
-from app.config import open_router_model
+from app.config import open_router_model, CHROMA_PERSIST_DIR
 from app.rag.embeddings import embeddings, validate_chunks_for_embeddings
 from app.rag.transcript import sec_to_mmss
 
@@ -55,14 +56,28 @@ query_constructor = load_query_constructor_runnable(
 )
 
 
+def _resolve_collection_name(video_id: str, collection_name: Optional[str]) -> str:
+    return collection_name or f"youtube-transcript-{video_id}"
+
+
 def create_vectorstore_for_video(
     video_id: str,
     chunks: List[Document],
     collection_name: Optional[str] = None,
 ) -> Optional[Chroma]:
     """Create a Chroma vector store for a video's transcript chunks."""
-    if collection_name is None:
-        collection_name = f"youtube-transcript-{video_id}"
+    collection_name = _resolve_collection_name(video_id, collection_name)
+
+    # Reuse persisted index if already present.
+    existing, existing_docs, _ = load_persisted_video_index(video_id, collection_name)
+    if existing is not None and existing_docs:
+        logger.info(
+            "Reusing persisted vector index for %s (collection=%s, chunks=%d)",
+            video_id,
+            collection_name,
+            len(existing_docs),
+        )
+        return existing
 
     for c in chunks:
         c.metadata.setdefault("video_id", video_id)
@@ -72,7 +87,12 @@ def create_vectorstore_for_video(
         logger.warning("No valid chunks after validation for video %s", video_id)
         return None
 
-    return Chroma.from_documents(validated, embeddings, collection_name=collection_name)
+    return Chroma.from_documents(
+        validated,
+        embeddings,
+        collection_name=collection_name,
+        persist_directory=CHROMA_PERSIST_DIR,
+    )
 
 
 def build_self_query_retriever(
@@ -86,6 +106,81 @@ def build_self_query_retriever(
         search_kwargs={"k": dynamic_k},
         verbose=verbose,
     )
+
+
+def _dynamic_k_from_count(num_chunks: int) -> int:
+    if num_chunks < 20:
+        return min(max(1, num_chunks), 5)
+    return max(5, min(10, int(math.log2(num_chunks) * 1.5)))
+
+
+def load_persisted_video_index(
+    video_id: str,
+    collection_name: Optional[str] = None,
+) -> Tuple[Optional[Chroma], List[Document], int]:
+    """Load an existing persisted Chroma collection for a video if available."""
+    collection_name = _resolve_collection_name(video_id, collection_name)
+
+    try:
+        vectorstore = Chroma(
+            collection_name=collection_name,
+            embedding_function=embeddings,
+            persist_directory=CHROMA_PERSIST_DIR,
+        )
+        count = int(vectorstore._collection.count()) if vectorstore._collection else 0
+        if count <= 0:
+            return None, [], 5
+
+        raw = vectorstore.get(include=["documents", "metadatas"])
+        docs: List[Document] = []
+        documents = raw.get("documents") or []
+        metadatas = raw.get("metadatas") or []
+        for i, text in enumerate(documents):
+            if not text:
+                continue
+            md = dict(metadatas[i] if i < len(metadatas) and metadatas[i] else {})
+            md.setdefault("video_id", video_id)
+            docs.append(Document(page_content=text, metadata=md))
+
+        if not docs:
+            # Keep vectorstore available even if metadata fetch failed.
+            return vectorstore, [], _dynamic_k_from_count(count)
+
+        docs.sort(key=lambda d: int((d.metadata or {}).get("start", 0) or 0))
+        return vectorstore, docs, _dynamic_k_from_count(len(docs))
+    except Exception as e:
+        logger.debug("No persisted index available for %s: %s", video_id, e)
+        return None, [], 5
+
+
+def delete_persisted_video_index(
+    video_id: str,
+    collection_name: Optional[str] = None,
+) -> bool:
+    """Delete a video's persisted Chroma collection."""
+    collection_name = _resolve_collection_name(video_id, collection_name)
+
+    try:
+        vectorstore = Chroma(
+            collection_name=collection_name,
+            embedding_function=embeddings,
+            persist_directory=CHROMA_PERSIST_DIR,
+        )
+        vectorstore.delete_collection()
+        logger.info(
+            "Deleted persisted vector index for %s (collection=%s)",
+            video_id,
+            collection_name,
+        )
+        return True
+    except Exception as e:
+        logger.debug(
+            "Unable to delete persisted vector index for %s (collection=%s): %s",
+            video_id,
+            collection_name,
+            e,
+        )
+        return False
 
 
 # ─── Evidence formatting ─────────────────────────────────────

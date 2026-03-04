@@ -6,7 +6,7 @@ Orchestrates transcript â†’ chunks â†’ embeddings â†’ retrieval �
 import logging
 import re
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
@@ -22,11 +22,9 @@ from app.rag.transcript import (
 from app.rag.retriever import (
     create_vectorstore_for_video,
     build_self_query_retriever,
+    delete_persisted_video_index,
+    load_persisted_video_index,
     is_low_quality_text,
-)
-from app.rag.multi_video_pipeline import (
-    run_multi_video_pipeline,
-    check_technical_videos_internal,
 )
 from app.rag.retrieval_helpers import (
     build_focus_query as _build_focus_query,
@@ -42,7 +40,9 @@ from app.rag.retrieval_helpers import (
     strip_time_phrases as _strip_time_phrases,
 )
 from app.rag.policy_helpers import (
+    classify_answer_support,
     get_response_policy,
+    is_meta_chat_query,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,43 @@ def get_or_create_session(session_id: Optional[str] = None) -> str:
     return new_id
 
 
+def _build_summary_source_text(chunks, max_chars: int = 500000) -> str:
+    """Build bounded source text for summary generation."""
+    total_text = " ".join([c.page_content for c in chunks])
+    if len(total_text) <= max_chars:
+        return total_text
+    step = len(total_text) // max_chars + 1
+    sampled = chunks[::step]
+    return " ".join([c.page_content for c in sampled])
+
+
+def _clean_starter_questions(candidates: List[str], max_items: int = 3) -> list[str]:
+    """Normalize, validate, and deduplicate short starter questions."""
+    cleaned: list[str] = []
+    for item in candidates:
+        text = " ".join(str(item).strip(" -*0123456789.\t").split())
+        if len(text) < 8:
+            continue
+        if not text.endswith("?"):
+            text = f"{text}?"
+        words = [w for w in re.findall(r"[A-Za-z0-9']+", text) if w]
+        if len(words) < 4 or len(words) > 6:
+            continue
+        cleaned.append(text)
+
+    unique: list[str] = []
+    seen = set()
+    for q in cleaned:
+        key = q.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(q)
+        if len(unique) >= max_items:
+            break
+    return unique
+
+
 #  Intent Router 
 def _normalize_summary_text(text: str) -> str:
     """Normalize summary to overview + 'Key Takeaways:' bullets."""
@@ -82,47 +119,118 @@ def _normalize_summary_text(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     ).strip()
-
-    has_takeaways = re.search(
-        r"(?im)^\s*(?:\*\*|__)?key\s+takeaways(?:\*\*|__)?\s*:\s*$",
+    cleaned = re.sub(
+        r"(?i)\s*(?:\*\*|__)?key\s+takeaways(?:\*\*|__)?\s*:",
+        "\n\nKey Takeaways:",
         cleaned,
     )
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
-    if not has_takeaways:
+    overview_lines: list[str] = []
+    bullets: list[str] = []
+    in_takeaways = False
+
+    for raw_line in cleaned.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if re.match(r"(?i)^(?:\*\*|__)?key\s+takeaways(?:\*\*|__)?\s*:\s*$", line):
+            in_takeaways = True
+            continue
+
+        # Normalize malformed bullet prefixes such as "* * ...", "- * ...", "• * ..."
+        normalized_bullet = re.sub(r"^(?:[-*\u2022]\s*)+", "", line).strip()
+        if in_takeaways:
+            if normalized_bullet:
+                bullets.append(normalized_bullet)
+            continue
+
+        # If a line starts like a bullet before heading appears, still treat it as takeaway.
+        if re.match(r"^(?:[-*\u2022]\s*)+", line) and normalized_bullet:
+            bullets.append(normalized_bullet)
+            continue
+
+        overview_lines.append(line)
+
+    overview = re.sub(r"\s+", " ", " ".join(overview_lines)).strip()
+
+    if not bullets:
         sentences = [
-            s.strip() for s in re.split(r"(?<=[.!?])\s+", cleaned) if s and s.strip()
+            s.strip() for s in re.split(r"(?<=[.!?])\s+", overview or cleaned) if s.strip()
         ]
         if not sentences:
             return cleaned
-
-        overview = " ".join(sentences[:5]).strip()
-        tail = [s for s in sentences[5:] if len(s.split()) >= 4]
+        overview = " ".join(sentences[:4]).strip()
+        tail = [s for s in sentences[4:] if len(s.split()) >= 4]
         if not tail:
             tail = [s for s in sentences[1:6] if len(s.split()) >= 4]
         bullets = tail[:5]
 
-        if bullets:
-            bullet_block = "\n".join(f"* {line}" for line in bullets)
-            return f"{overview}\n\nKey Takeaways:\n{bullet_block}".strip()
-        return overview
-
-    normalized_lines = []
-    in_takeaways = False
-    for raw_line in cleaned.splitlines():
-        line = raw_line.strip()
-        if re.match(r"(?i)^(?:\*\*|__)?key\s+takeaways(?:\*\*|__)?\s*:\s*$", line):
-            in_takeaways = True
-            normalized_lines.append("Key Takeaways:")
+    dedup_bullets: list[str] = []
+    seen = set()
+    for bullet in bullets:
+        key = re.sub(r"\s+", " ", bullet).strip().lower()
+        if not key or key in seen:
             continue
-        if in_takeaways and line:
-            if re.match(r"^[-\u2022]\s+", line):
-                normalized_lines.append("* " + re.sub(r"^[-\u2022]\s+", "", line))
-            else:
-                normalized_lines.append(raw_line.rstrip())
-        else:
-            normalized_lines.append(raw_line.rstrip())
+        seen.add(key)
+        dedup_bullets.append(re.sub(r"\s+", " ", bullet).strip())
+        if len(dedup_bullets) >= 5:
+            break
 
-    return "\n".join(normalized_lines).strip()
+    if not dedup_bullets:
+        return overview or cleaned
+
+    bullet_block = "\n".join(f"* {line}" for line in dedup_bullets)
+    if not overview:
+        return f"Key Takeaways:\n{bullet_block}".strip()
+    return f"{overview}\n\nKey Takeaways:\n{bullet_block}".strip()
+
+
+def _shape_summary_for_chat(summary_text: str, video_title: str) -> str:
+    """Return a concise, clean chat summary from cached long-form summary."""
+    normalized = _normalize_summary_text(summary_text)
+    if not normalized:
+        return f"In this video, the main discussion is about {video_title}."
+
+    parts = re.split(r"(?im)^\s*Key\s+Takeaways\s*:\s*$", normalized, maxsplit=1)
+    overview = parts[0].strip()
+    takeaways_raw = parts[1] if len(parts) > 1 else ""
+
+    overview_sentences = [
+        s.strip() for s in re.split(r"(?<=[.!?])\s+", overview) if s.strip()
+    ]
+    concise_overview = " ".join(overview_sentences[:3]).strip() or overview
+
+    bullet_lines = []
+    for line in takeaways_raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.match(r"^(?:[-*\u2022]\s*)+", stripped):
+            text = re.sub(r"^(?:[-*\u2022]\s*)+", "", stripped).strip()
+            if text:
+                bullet_lines.append(text)
+
+    dedup = []
+    seen = set()
+    for line in bullet_lines:
+        key = re.sub(r"\s+", " ", line).strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        dedup.append(re.sub(r"\s+", " ", line).strip())
+        if len(dedup) >= 4:
+            break
+
+    if not concise_overview.lower().startswith("in this video"):
+        concise_overview = f"In this video, {concise_overview[:1].lower() + concise_overview[1:]}" if concise_overview else f"In this video, the discussion is about {video_title}."
+
+    if not dedup:
+        return concise_overview
+
+    bullets = "\n".join(f"* {line}" for line in dedup)
+    return f"{concise_overview}\n\nKey Takeaways:\n{bullets}".strip()
 
 
 class SummaryPayload(BaseModel):
@@ -162,6 +270,7 @@ RAG_PROMPT = PromptTemplate(
     3. Before concluding "not covered", re-check the evidence for direct factual statements (numbers, durations, dates, names) relevant to the user question.
     4. Do not append raw links, source labels, or footer boilerplate.
     5. For factual queries, provide a direct answer plus 1-2 concise supporting lines grounded in evidence.
+    5.1 For open-ended video questions (for example "what is she saying", "what does X do better"), include brief context in 2-4 lines: who is speaking and what specific point is being discussed in this video.
     6. If the user provides a quoted/pasted line to explain, address all major claims in that line (people, numbers, events, context), not just one part.
     7. Keep the response concise, conversational, and in the same language as the user question.
     8. Do not infer causes or motivations that are not explicitly stated in the evidence.
@@ -207,7 +316,6 @@ CHAT_PROMPT = PromptTemplate(
     input_variables=["video_summary", "chat_history", "question"],
 )
 
-
 #  Core Pipeline Functions 
 def process_video(session_id: str, video_url: str) -> dict:
     """Process a video: fetch metadata, transcript, chunk, embed, store."""
@@ -220,6 +328,22 @@ def process_video(session_id: str, video_url: str) -> dict:
         return cached
 
     metadata = fetch_video_metadata(video_id)
+
+    # Reuse persisted embeddings/chunks across sessions/restarts when available.
+    persisted_vs, persisted_chunks, persisted_k = load_persisted_video_index(
+        video_id, collection_name=f"youtube-{video_id}"
+    )
+    if persisted_vs is not None and persisted_chunks:
+        result = {
+            "video_id": video_id,
+            "metadata": metadata,
+            "chunks": persisted_chunks,
+            "dynamic_k": persisted_k,
+            "vectorstore": persisted_vs,
+        }
+        session["processed_videos"][video_id] = result
+        return result
+
     chunks, dynamic_k = ingest_video_to_chunks(video_id)
 
     vectorstore = None
@@ -266,9 +390,24 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
     include_timestamps = policy.include_timestamps
     retrieval_focus = policy.retrieval_focus
     use_history = policy.use_history
+
+    # Guard against misrouting: non-meta content questions should not fall into CHAT.
+    is_meta_chat = False
+    if intent == "CHAT":
+        is_meta_chat = is_meta_chat_query(message)
+        if not is_meta_chat:
+            logger.info("Policy override: forcing RAG for non-meta single-video query.")
+            intent = "RAG"
+            include_timestamps = True
+            use_history = False
+
     is_precise = retrieval_focus == "PRECISE" or include_timestamps
     # Precise factual queries should return a grounded timestamp source.
     include_timestamps = include_timestamps or is_precise
+    # For single-video RAG responses, always emit one grounded timestamp source when evidence exists.
+    # CHAT/SUMMARY paths remain timestamp-free.
+    if intent == "RAG":
+        include_timestamps = True
 
     max_transcript_second = 0
     for chunk in chunks:
@@ -285,11 +424,12 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         include_timestamps = False
 
     logger.info(
-        "Detected policy: route=%s include_timestamps=%s retrieval_focus=%s use_history=%s out_of_range_time=%s",
+        "Detected policy: route=%s include_timestamps=%s retrieval_focus=%s use_history=%s meta_chat=%s out_of_range_time=%s",
         intent,
         include_timestamps,
         retrieval_focus,
         use_history,
+        is_meta_chat,
         is_time_out_of_range,
     )
 
@@ -299,7 +439,10 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
             session["summary_cache"][video_id] = _get_universal_summary(
                 chunks, metadata
             )
-        summary = session["summary_cache"][video_id]
+        summary = _shape_summary_for_chat(
+            session["summary_cache"][video_id],
+            metadata.get("title", "this video"),
+        )
         history.add_user_message(message)
         history.add_ai_message(summary)
         return {"response": summary, "intent": "SUMMARY", "sources": []}
@@ -502,6 +645,20 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
                 "precision_guidance": precision_guidance,
             }
         )
+        support = classify_answer_support(
+            question=message,
+            answer=result,
+            video_summary=(
+                f"{metadata.get('title', 'this video')}\n"
+                f"{str(metadata.get('description', ''))[:600]}"
+            ),
+        )
+        is_not_found_or_out_of_scope = (
+            support.status == "NOT_FOUND_OR_OUT_OF_SCOPE"
+        )
+        if is_not_found_or_out_of_scope:
+            result = f"That isn't discussed here. This video focuses on {video_focus}."
+
         history.add_user_message(message)
         history.add_ai_message(result)
 
@@ -529,7 +686,12 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
                 chosen_ts = mentioned_ts
         else:
             chosen_ts = evidence_ts
-        should_emit_source = bool(candidate_docs) and include_timestamps and not is_time_out_of_range
+        should_emit_source = (
+            bool(candidate_docs)
+            and include_timestamps
+            and not is_time_out_of_range
+            and not is_not_found_or_out_of_scope
+        )
         if should_emit_source:
             sources = [{"timestamp": int(chosen_ts), "video_id": video_id}]
 
@@ -575,73 +737,57 @@ def summarize_video(session_id: str, video_url: str) -> dict:
     }
 
 
-def compare_videos(
-    session_id: str,
-    url1: str,
-    url2: str,
-    question: str,
-    study_mode: bool = False,
-    is_chat: Optional[bool] = None,
+def cleanup_video_artifacts(
+    session_id: Optional[str],
+    video_urls: List[str],
+    drop_persisted: bool = True,
+    drop_session: bool = False,
 ) -> dict:
-    """Compare two videos using the dedicated multi-video pipeline."""
-    session = sessions[session_id]
-    history = session["history"]
-
-    proc_a = process_video(session_id, url1)
-    proc_b = process_video(session_id, url2)
-
-    vs_a = proc_a["vectorstore"]
-    vs_b = proc_b["vectorstore"]
-
-    if vs_a is None and vs_b is None:
-        return {
-            "response": "Transcripts missing for both videos. Cannot compare.",
-            "intent": "ERROR",
-            "study_mode": False,
+    """Remove cached session artifacts and optionally persisted vector indexes."""
+    video_ids = sorted(
+        {
+            extract_video_id(url.strip())
+            for url in (video_urls or [])
+            if isinstance(url, str) and url.strip()
         }
+    )
 
-    try:
-        is_chat_mode = is_chat if is_chat is not None else len(history.messages) > 0
-        result = run_multi_video_pipeline(
-            proc_a, proc_b, question, study_mode=study_mode, is_chat=is_chat_mode
-        )
-        response_text = result["response"]
-        history.add_user_message(question)
-        history.add_ai_message(response_text)
-        return {
-            "response": response_text,
-            "intent": "COMPARE",
-            "video_a": result["video_a"],
-            "video_b": result["video_b"],
-            "study_mode": result["study_mode"],
-        }
-    except Exception as e:
-        logger.exception("Multi-video comparison failed: %s", e)
-        return {
-            "response": "Error during comparison.",
-            "intent": "ERROR",
-            "study_mode": False,
-        }
+    removed_session_entries = 0
+    removed_summary_entries = 0
+    removed_starter_entries = 0
 
+    if session_id and session_id in sessions:
+        session = sessions[session_id]
+        for video_id in video_ids:
+            if session["processed_videos"].pop(video_id, None) is not None:
+                removed_session_entries += 1
+            if session["summary_cache"].pop(video_id, None) is not None:
+                removed_summary_entries += 1
+            if session["starter_questions_cache"].pop(video_id, None) is not None:
+                removed_starter_entries += 1
 
-def check_technical_videos(session_id: str, url1: str, url2: str) -> bool:
-    """Check if either video has deep technical/analytical content for study mode."""
-    proc_a = process_video(session_id, url1)
-    proc_b = process_video(session_id, url2)
-    return check_technical_videos_internal(proc_a, proc_b)
+        if drop_session:
+            sessions.pop(session_id, None)
+
+    removed_persisted_indexes = 0
+    if drop_persisted:
+        for video_id in video_ids:
+            if delete_persisted_video_index(video_id, collection_name=f"youtube-{video_id}"):
+                removed_persisted_indexes += 1
+
+    return {
+        "video_ids": video_ids,
+        "removed_session_entries": removed_session_entries,
+        "removed_summary_entries": removed_summary_entries,
+        "removed_starter_entries": removed_starter_entries,
+        "removed_persisted_indexes": removed_persisted_indexes,
+        "session_removed": bool(drop_session and session_id),
+    }
 
 
 #  Internal helpers 
 def _get_universal_summary(chunks, metadata) -> str:
-    MAX_CHARS = 500000
-    total_text = " ".join([c.page_content for c in chunks])
-
-    if len(total_text) > MAX_CHARS:
-        step = len(total_text) // MAX_CHARS + 1
-        sampled = chunks[::step]
-        final_text = " ".join([c.page_content for c in sampled])
-    else:
-        final_text = total_text
+    final_text = _build_summary_source_text(chunks)
 
     title = metadata.get("title", "this video")
     res = open_router_model.invoke(f"""
@@ -683,28 +829,8 @@ Rules:
 """
         )
         raw = res.content if hasattr(res, "content") else str(res)
-        lines = [ln.strip(" -*0123456789.\t") for ln in raw.splitlines() if ln.strip()]
-        cleaned: list[str] = []
-        for ln in lines:
-            text = " ".join(ln.split())
-            if len(text) < 8:
-                continue
-            if not text.endswith("?"):
-                text = f"{text}?"
-            words = [w for w in re.findall(r"[A-Za-z0-9']+", text) if w]
-            if len(words) < 4 or len(words) > 6:
-                continue
-            cleaned.append(text)
-        unique = []
-        seen = set()
-        for q in cleaned:
-            key = q.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(q)
-            if len(unique) == 3:
-                break
+        lines = [ln for ln in raw.splitlines() if ln.strip()]
+        unique = _clean_starter_questions(lines, max_items=3)
         if len(unique) == 3:
             return unique
     except Exception:
@@ -715,14 +841,7 @@ Rules:
 
 def _get_summary_payload(chunks, metadata) -> SummaryPayload:
     """Generate summary + short starter questions together in structured JSON."""
-    MAX_CHARS = 500000
-    total_text = " ".join([c.page_content for c in chunks])
-    if len(total_text) > MAX_CHARS:
-        step = len(total_text) // MAX_CHARS + 1
-        sampled = chunks[::step]
-        final_text = " ".join([c.page_content for c in sampled])
-    else:
-        final_text = total_text
+    final_text = _build_summary_source_text(chunks)
 
     title = metadata.get("title", "this video")
     parser = PydanticOutputParser(pydantic_object=SummaryPayload)
@@ -760,26 +879,7 @@ VIDEO CONTENT:
     try:
         payload = chain.invoke({"title": title, "video_content": final_text})
         questions = payload.questions if isinstance(payload.questions, list) else []
-        cleaned = []
-        for q in questions:
-            text = " ".join(str(q).split())
-            if not text:
-                continue
-            if not text.endswith("?"):
-                text = f"{text}?"
-            words = [w for w in re.findall(r"[A-Za-z0-9']+", text) if w]
-            if 4 <= len(words) <= 6:
-                cleaned.append(text)
-        dedup = []
-        seen = set()
-        for q in cleaned:
-            k = q.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            dedup.append(q)
-            if len(dedup) == 3:
-                break
+        dedup = _clean_starter_questions(questions, max_items=3)
         summary_text = _normalize_summary_text((payload.summary or "").strip())
         # Guard: if structured summary comes back too short, fallback to richer formatter.
         if len(summary_text.split()) < 70:

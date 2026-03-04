@@ -37,6 +37,12 @@ class AnswerSupport(BaseModel):
     )
 
 
+class MetaChatDecision(BaseModel):
+    is_meta_chat: bool = Field(
+        description="Whether the user message is conversational/meta-assistant and should bypass retrieval."
+    )
+
+
 def get_response_policy(query: str, history: ChatMessageHistory) -> ResponsePolicy:
     recent_history = "\n".join(
         [f"{m.type}: {m.content}" for m in history.messages[-4:]]
@@ -55,6 +61,7 @@ def get_response_policy(query: str, history: ChatMessageHistory) -> ResponsePoli
 
     Output rules:
     - route=CHAT for conversational flow (gratitude, acknowledgement, greeting, short social follow-up).
+    - route=CHAT for assistant-meta questions (capabilities/about-you/how-can-you-help/what-can-you-do).
       include_timestamps=false.
     - route=SUMMARY for broad overview requests of the whole video.
       include_timestamps=false.
@@ -85,6 +92,37 @@ def get_response_policy(query: str, history: ChatMessageHistory) -> ResponsePoli
     except Exception as e:
         logger.exception("Policy router parsing error: %s. Defaulting to RAG/no timestamps.", e)
         return ResponsePolicy(route="RAG", include_timestamps=False, retrieval_focus="GENERAL", use_history=False)
+
+
+def is_meta_chat_query(query: str) -> bool:
+    """Model-driven classifier for conversational/meta queries that should not trigger retrieval."""
+    parser = PydanticOutputParser(pydantic_object=MetaChatDecision)
+    prompt = PromptTemplate(
+        template="""
+You are classifying a user message for a video Q&A assistant.
+
+USER MESSAGE:
+{query}
+
+Mark is_meta_chat=true if this is primarily:
+- social acknowledgement/chit-chat (thanks, okay, greetings, appreciation),
+- assistant capability/about-you question (what can you do/how can you help),
+- control flow chat that does not request specific video evidence.
+
+Mark is_meta_chat=false if user asks for video facts, moments, timestamps, comparisons, or explanations grounded in video content.
+
+Return only structured output.
+{format_instructions}
+""",
+        input_variables=["query"],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+    chain = prompt | open_router_model | parser
+    try:
+        return bool(chain.invoke({"query": query}).is_meta_chat)
+    except Exception as e:
+        logger.exception("Meta-chat classification error: %s. Defaulting to False.", e)
+        return False
 
 
 def classify_answer_support(question: str, answer: str, video_summary: str) -> AnswerSupport:

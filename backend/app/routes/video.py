@@ -17,15 +17,17 @@ from app.schemas import (
     HealthResponse,
     CheckTechnicalRequest,
     CheckTechnicalResponse,
+    CleanupRequest,
+    CleanupResponse,
 )
 from app.rag.pipeline import (
     get_or_create_session,
     process_video,
     chat_with_video,
     summarize_video,
-    compare_videos,
-    check_technical_videos,
+    cleanup_video_artifacts,
 )
+from app.rag.compare_service import compare_videos, check_technical_videos
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -114,4 +116,28 @@ async def check_technical_endpoint(req: CheckTechnicalRequest):
         return CheckTechnicalResponse(is_technical=result)
     except Exception as e:
         logger.exception("Error checking technical videos: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cleanup", response_model=CleanupResponse)
+async def cleanup_endpoint(req: CleanupRequest):
+    """Cleanup session caches and persisted vector indexes for one or more video URLs."""
+    try:
+        result = cleanup_video_artifacts(
+            session_id=req.session_id,
+            video_urls=req.video_urls,
+            drop_persisted=req.drop_persisted,
+            drop_session=req.drop_session,
+        )
+        return CleanupResponse(
+            status="ok",
+            removed_video_ids=result.get("video_ids", []),
+            removed_session_entries=result.get("removed_session_entries", 0),
+            removed_summary_entries=result.get("removed_summary_entries", 0),
+            removed_starter_entries=result.get("removed_starter_entries", 0),
+            removed_persisted_indexes=result.get("removed_persisted_indexes", 0),
+            session_removed=result.get("session_removed", False),
+        )
+    except Exception as e:
+        logger.exception("Error during cleanup: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

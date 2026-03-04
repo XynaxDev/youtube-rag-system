@@ -37,6 +37,13 @@ class CheckTechnicalRequest(BaseModel):
     url2: str
 
 
+class CleanupRequest(BaseModel):
+    session_id: Optional[str] = None
+    video_urls: List[str] = []
+    drop_persisted: bool = True
+    drop_session: bool = False
+
+
 # ─── Responses ────────────────────────────────────────────────
 class ProcessVideoResponse(BaseModel):
     session_id: str
@@ -71,6 +78,16 @@ class CompareResponse(BaseModel):
 
 class CheckTechnicalResponse(BaseModel):
     is_technical: bool
+
+
+class CleanupResponse(BaseModel):
+    status: str
+    removed_video_ids: List[str] = []
+    removed_session_entries: int = 0
+    removed_summary_entries: int = 0
+    removed_starter_entries: int = 0
+    removed_persisted_indexes: int = 0
+    session_removed: bool = False
 
 
 class HealthResponse(BaseModel):
