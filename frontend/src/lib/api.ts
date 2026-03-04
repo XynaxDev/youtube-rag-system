@@ -49,6 +49,16 @@ export interface CheckTechnicalResponse {
   is_technical: boolean;
 }
 
+export interface CleanupResponse {
+  status: string;
+  removed_video_ids: string[];
+  removed_session_entries: number;
+  removed_summary_entries: number;
+  removed_starter_entries: number;
+  removed_persisted_indexes: number;
+  session_removed: boolean;
+}
+
 // ─── API Functions ───────────────────────────────────────────
 
 async function apiFetch<T>(endpoint: string, body: Record<string, unknown>): Promise<T> {
@@ -141,6 +151,20 @@ export async function checkTechnicalVideos(
     session_id: sessionId,
     url1,
     url2,
+  });
+}
+
+export async function cleanupArtifacts(
+  sessionId: string | null,
+  videoUrls: string[],
+  dropPersisted: boolean = true,
+  dropSession: boolean = false
+): Promise<CleanupResponse> {
+  return apiFetch<CleanupResponse>("/api/cleanup", {
+    session_id: sessionId,
+    video_urls: videoUrls,
+    drop_persisted: dropPersisted,
+    drop_session: dropSession,
   });
 }
 

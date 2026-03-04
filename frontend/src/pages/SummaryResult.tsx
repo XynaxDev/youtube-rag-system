@@ -558,13 +558,13 @@ export function SummaryResult() {
                       p: ({ children }) => {
                         const text = typeof children === "string" ? children : "";
                         if (/^key takeaways:?$/i.test(text.trim())) {
-                          return <h3 className="text-white font-bold text-base mt-7 mb-3">{text}</h3>;
+                          return <h3 className="text-white font-extrabold text-base mt-4 mb-1">{text}</h3>;
                         }
                         return <p className="mb-4 text-gray-300 leading-relaxed">{children}</p>;
                       },
                       strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
-                      ul: ({ children }) => <ul className="mb-6 list-none p-0 space-y-2">{children}</ul>,
-                      ol: ({ children }) => <ol className="mb-6 list-none p-0 space-y-2">{children}</ol>,
+                      ul: ({ children }) => <ul className="mb-3 list-none p-0 space-y-0.5">{children}</ul>,
+                      ol: ({ children }) => <ol className="mb-3 list-none p-0 space-y-0.5">{children}</ol>,
                       li: ({ children }) => {
                         const isHeader = typeof children === "string" && /^key takeaways:?$/i.test(children.trim());
                         return (
@@ -659,7 +659,7 @@ export function SummaryResult() {
                                   <ReactMarkdown
                                     components={{
                                       p: ({ children }) => <p className="m-0">{children}</p>,
-                                      ul: ({ children }) => <ul className="m-0 list-none p-0 space-y-1.5">{children}</ul>,
+                                      ul: ({ children }) => <ul className="m-0 list-none p-0 space-y-0.5">{children}</ul>,
                                       li: ({ children }) => {
                                         const text = Array.isArray(children)
                                           ? children.map(c => typeof c === 'string' ? c : '').join('')
@@ -668,23 +668,21 @@ export function SummaryResult() {
                                         const isSummary = text.toLowerCase().startsWith('summary:');
                                         const isTakeaways = text.toLowerCase().startsWith('key takeaways:');
 
-                                        if (isSummary || isTakeaways) {
+                                        if (isSummary) {
+                                          return null;
+                                        }
+                                        if (isTakeaways) {
                                           return (
-                                            <li className="mt-8 mb-6 list-none first:mt-0">
-                                              <div className="flex items-center gap-3">
-                                                <div className="h-px flex-1 bg-gradient-to-r from-blue-500/50 to-transparent" />
-                                                <span className="shrink-0 inline-flex items-center gap-2 px-3 py-1 bg-blue-600/10 border border-blue-500/20 rounded-lg text-blue-400 font-bold text-[10px] uppercase tracking-widest font-serif italic backdrop-blur-sm shadow-[0_0_20px_rgba(59,130,246,0.1)]">
-                                                  <Sparkles className="w-3.5 h-3.5" />
-                                                  {text}
-                                                </span>
-                                                <div className="h-px flex-1 bg-gradient-to-l from-blue-500/50 to-transparent" />
-                                              </div>
+                                            <li className="list-none mt-2 mb-1">
+                                              <span className="text-white font-extrabold text-[13px]">
+                                                Key Takeaways:
+                                              </span>
                                             </li>
                                           );
                                         }
 
                                         return (
-                                          <li className="flex gap-2.5 items-start mb-3 last:mb-0">
+                                          <li className="flex gap-2.5 items-start mb-1 last:mb-0">
                                             <Sparkles className="w-3.5 h-3.5 text-blue-500/40 shrink-0 mt-1" />
                                             <span className="text-[13px] leading-relaxed text-gray-300">{children}</span>
                                           </li>
@@ -986,12 +984,12 @@ export function SummaryResult() {
                               p: ({ children }) => {
                                 const text = typeof children === "string" ? children : "";
                                 if (/^key takeaways:?$/i.test(text.trim())) {
-                                  return <h3 className="text-white font-bold text-xl md:text-2xl mt-8 mb-4">{text}</h3>;
+                                  return <h3 className="text-white font-extrabold text-lg md:text-xl mt-4 mb-1">{text}</h3>;
                                 }
                                 return <p className="mb-4 text-gray-300 text-[14px] md:text-[15px] leading-[1.8]">{children}</p>;
                               },
                               strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
-                              ul: ({ children }) => <ul className="mb-6 list-none p-0 space-y-2">{children}</ul>,
+                              ul: ({ children }) => <ul className="mb-3 list-none p-0 space-y-0.5">{children}</ul>,
                               li: ({ children }) => {
                                 const text = Array.isArray(children)
                                   ? children.map(c => typeof c === 'string' ? c : '').join('')
@@ -1000,11 +998,11 @@ export function SummaryResult() {
                                 const isHeader = /^key takeaways:?$/i.test(text.trim());
 
                                 return (
-                                  <li className={cn("flex gap-3 items-start", isHeader ? "mt-12 mb-6 block w-full" : "mb-3")}>
+                                  <li className={cn("flex gap-3 items-start", isHeader ? "mt-4 mb-1 block w-full" : "mb-1")}>
                                     {!isHeader && <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-1.5" />}
                                     <span className={cn(
                                       "text-[14px] md:text-[15px] leading-relaxed text-gray-300",
-                                      isHeader && "text-white font-bold text-xl md:text-2xl font-serif italic block border-l-4 border-blue-500 pl-5 py-2 bg-white/[0.02] rounded-r-xl"
+                                      isHeader && "text-white font-extrabold text-lg md:text-xl block"
                                     )}>{children}</span>
                                   </li>
                                 );
@@ -1123,8 +1121,8 @@ export function SummaryResult() {
                                             h3: ({ children }) => <h3 className="text-blue-300 font-bold text-sm md:text-md mt-3 mb-1 font-serif italic">{children}</h3>,
                                             p: ({ children }) => <p className="m-0 text-gray-300 text-[13px] md:text-[14px] leading-relaxed">{children}</p>,
                                             strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
-                                            ul: ({ children }) => <ul className="m-0 list-none p-0 space-y-2">{children}</ul>,
-                                            ol: ({ children }) => <ol className="m-0 list-none p-0 space-y-2">{children}</ol>,
+                                            ul: ({ children }) => <ul className="m-0 list-none p-0 space-y-0.5">{children}</ul>,
+                                            ol: ({ children }) => <ol className="m-0 list-none p-0 space-y-0.5">{children}</ol>,
                                             li: ({ children }) => {
                                               const text = Array.isArray(children)
                                                 ? children.map(c => typeof c === 'string' ? c : '').join('')
@@ -1133,23 +1131,21 @@ export function SummaryResult() {
                                               const isSummary = text.toLowerCase().startsWith('summary:');
                                               const isTakeaways = text.toLowerCase().startsWith('key takeaways:');
 
-                                              if (isSummary || isTakeaways) {
+                                              if (isSummary) {
+                                                return null;
+                                              }
+                                              if (isTakeaways) {
                                                 return (
-                                                  <li className="mt-8 mb-6 list-none first:mt-0">
-                                                    <div className="flex items-center gap-3">
-                                                      <div className="h-px flex-1 bg-gradient-to-r from-blue-500/50 to-transparent" />
-                                                      <span className="shrink-0 inline-flex items-center gap-2.5 px-4 py-1.5 bg-blue-600/10 border border-blue-500/40 rounded-xl text-blue-400 font-bold text-[12px] md:text-xs uppercase tracking-[0.2em] shadow-[0_0_30px_rgba(59,130,246,0.1)] font-serif italic backdrop-blur-sm">
-                                                        <Sparkles className="w-4 h-4 text-blue-400" />
-                                                        {text}
-                                                      </span>
-                                                      <div className="h-px flex-1 bg-gradient-to-l from-blue-500/50 to-transparent" />
-                                                    </div>
+                                                  <li className="list-none mt-2 mb-1">
+                                                    <span className="text-white font-extrabold text-[14px]">
+                                                      Key Takeaways:
+                                                    </span>
                                                   </li>
                                                 );
                                               }
 
                                               return (
-                                                <li className="flex gap-3.5 items-start mb-4 last:mb-0 group/li">
+                                                <li className="flex gap-3.5 items-start mb-1 last:mb-0 group/li">
                                                   <Sparkles className="w-3 md:w-3.5 h-3 md:h-3.5 text-blue-500/40 shrink-0 mt-1.5 transition-all group-hover/li:text-blue-400" />
                                                   <span className="text-[13px] md:text-[14px] leading-relaxed text-gray-300 transition-colors group-hover/li:text-white">
                                                     {children}
@@ -1282,5 +1278,3 @@ export function SummaryResult() {
     </>
   );
 }
-
-

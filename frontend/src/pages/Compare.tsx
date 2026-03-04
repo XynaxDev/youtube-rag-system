@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
-  AlertCircle,
   Link2,
   Scale,
   Check,
@@ -11,7 +10,7 @@ import {
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useLenis } from "lenis/react";
-import { compareVideos, processVideo } from "../lib/api";
+import { checkTechnicalVideos, compareVideos, processVideo } from "../lib/api";
 import { cn } from "../lib/utils";
 import { saveHistory } from "../lib/history";
 import { useToast } from "../components/GlobalToast";
@@ -19,6 +18,17 @@ import { useToast } from "../components/GlobalToast";
 const DEFAULT_COMPARE_QUESTION =
   "Give a complete dual-video intelligence summary with key differences, strongest takeaways, and a clear recommendation only when learning context is valid.";
 const FALLBACK_ERROR = "We have some server issue. We will get back soon.";
+
+const extractVideoId = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes("youtu.be")) return parsed.pathname.replace("/", "");
+    if (parsed.hostname.includes("youtube.com")) return parsed.searchParams.get("v") || "";
+  } catch {
+    return "";
+  }
+  return "";
+};
 
 function ProcessingTerminal({ status }: { status: string }) {
   const [step, setStep] = useState(0);
@@ -84,17 +94,22 @@ export function Compare() {
   const [url1, setUrl1] = useState("");
   const [url2, setUrl2] = useState("");
   const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
   const [isComparing, setIsComparing] = useState(false);
   const [studyModeEnabled, setStudyModeEnabled] = useState(false);
   const [isStudyHintOpen, setIsStudyHintOpen] = useState(false);
   const lenis = useLenis();
 
+  const handleToggleStudyMode = () => {
+    const next = !studyModeEnabled;
+    setStudyModeEnabled(next);
+    showToast(next ? "Study Mode enabled" : "Study Mode disabled", "success");
+  };
+
   useEffect(() => {
     requestAnimationFrame(() => {
       lenis?.resize();
     });
-  }, [lenis, isComparing, error, status]);
+  }, [lenis, isComparing, status]);
 
   useEffect(() => {
     if (!("fonts" in document)) return;
@@ -107,24 +122,54 @@ export function Compare() {
 
   const handleCompare = async (e: FormEvent) => {
     e.preventDefault();
-    if (!url1.trim() || !url2.trim() || isComparing) return;
+    const cleanUrl1 = url1.trim();
+    const cleanUrl2 = url2.trim();
+    if (!cleanUrl1 || !cleanUrl2 || isComparing) return;
+
+    const id1 = extractVideoId(cleanUrl1);
+    const id2 = extractVideoId(cleanUrl2);
+    const sameInput =
+      cleanUrl1.toLowerCase() === cleanUrl2.toLowerCase() ||
+      (id1 && id2 && id1 === id2);
+    if (sameInput) {
+      const msg = "Use different video URLs for comparison.";
+      showToast(msg, "error");
+      return;
+    }
+
     setIsComparing(true);
-    setError("");
     setStatus("Booting pipeline");
 
     try {
       setStatus("Processing stream A");
-      const procA = await processVideo(url1.trim());
+      const procA = await processVideo(cleanUrl1);
       setStatus("Processing stream B");
-      const procB = await processVideo(url2.trim());
+      const procB = await processVideo(cleanUrl2);
+      let effectiveStudyMode = studyModeEnabled;
+      if (studyModeEnabled) {
+        setStatus("Validating study mode");
+        const technicalCheck = await checkTechnicalVideos(
+          procA.session_id,
+          cleanUrl1,
+          cleanUrl2
+        );
+        if (!technicalCheck.is_technical) {
+          effectiveStudyMode = false;
+          setStudyModeEnabled(false);
+          showToast(
+            "Study Mode auto-disabled for this pair. Continuing in normal compare mode.",
+            "warning"
+          );
+        }
+      }
       setStatus("Generating contrast map");
 
       const result = await compareVideos(
         procA.session_id,
-        url1.trim(),
-        url2.trim(),
+        cleanUrl1,
+        cleanUrl2,
         DEFAULT_COMPARE_QUESTION,
-        studyModeEnabled,
+        effectiveStudyMode,
         false
       );
 
@@ -141,9 +186,9 @@ export function Compare() {
           video_a: metaA,
           video_b: metaB,
           session_id: procA.session_id,
-          url1: url1.trim(),
-          url2: url2.trim(),
-          study_mode: studyModeEnabled,
+          url1: cleanUrl1,
+          url2: cleanUrl2,
+          study_mode: effectiveStudyMode,
           restored: true,
         },
       });
@@ -156,14 +201,13 @@ export function Compare() {
           video_a: metaA,
           video_b: metaB,
           session_id: procA.session_id,
-          url1: url1.trim(),
-          url2: url2.trim(),
-          study_mode: studyModeEnabled,
+          url1: cleanUrl1,
+          url2: cleanUrl2,
+          study_mode: effectiveStudyMode,
         },
       });
     } catch (err: any) {
       const msg = err?.message || FALLBACK_ERROR;
-      setError(msg);
       showToast(msg, "error");
     } finally {
       setStatus("");
@@ -213,66 +257,69 @@ export function Compare() {
                     <input type="url" value={url2} onChange={(e) => setUrl2(e.target.value)} placeholder="Video B URL..." className="w-full bg-black/50 border border-white/10 rounded-2xl h-14 pl-12 pr-4 text-[15px] outline-none focus:border-purple-500/40 transition-all font-medium placeholder:text-gray-800" />
                     <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-bold text-gray-700 pointer-events-none uppercase tracking-widest">Target Stream</div>
                   </div>
-                  <div className="flex flex-col md:flex-row items-center justify-between gap-6 md:gap-0 pt-2">
-                    <div className="text-[10px] text-gray-600 font-bold uppercase tracking-widest flex items-center gap-2">
-                      <Check className="w-3.5 h-3.5 text-blue-500/40" />
-                      Temporal Syncing Enabled
-                    </div>
-                    <div className="flex items-center gap-2 md:gap-3 w-full md:w-auto justify-end">
-                      <div className="flex items-center gap-2">
-                        <FlaskConical className={cn("w-4 h-4", studyModeEnabled ? "text-green-400" : "text-blue-400")} />
-                        <button
-                          type="button"
-                          onClick={() => setStudyModeEnabled((prev) => !prev)}
-                          aria-label="Toggle study mode"
-                          className={cn(
-                            "relative w-14 h-8 rounded-full border transition-all",
-                            studyModeEnabled
-                              ? "bg-green-500/20 border-green-500/40"
-                              : "bg-white/5 border-white/15"
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md transition-transform duration-200",
-                              studyModeEnabled ? "translate-x-6 bg-green-300" : "translate-x-0 bg-white"
-                            )}
-                          />
-                        </button>
-                        <div
-                          className="relative"
-                          onMouseEnter={() => setIsStudyHintOpen(true)}
-                          onMouseLeave={() => setIsStudyHintOpen(false)}
-                        >
+                  <div className="pt-2 space-y-2">
+                    <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 md:gap-3 w-full">
+                      <div className="w-full md:w-fit h-10 md:h-12 px-3 md:px-3.5 rounded-xl md:rounded-[1rem] border border-white/10 bg-white/5 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-1.5 md:gap-2">
+                          <FlaskConical className={cn("w-3.5 h-3.5", studyModeEnabled ? "text-green-400" : "text-blue-400")} />
+                          <span className="text-[9px] md:text-[10px] font-sans font-semibold uppercase tracking-[0.18em] text-gray-400">
+                            Study Mode
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="relative"
+                            onMouseEnter={() => setIsStudyHintOpen(true)}
+                            onMouseLeave={() => setIsStudyHintOpen(false)}
+                          >
+                            <button
+                              type="button"
+                              aria-label="Study mode info"
+                              className="w-7 h-7 rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:border-white/20 transition-all flex items-center justify-center"
+                            >
+                              <Info className="w-3.5 h-3.5" />
+                            </button>
+                            <div className={cn(
+                              "absolute top-full mt-2 right-0 w-[240px] sm:w-[300px] md:w-[380px] max-w-[calc(100vw-1rem)] rounded-2xl border border-white/15 bg-[#101219]/95 backdrop-blur-xl p-4 text-left shadow-2xl z-30 transition-all duration-200",
+                              isStudyHintOpen ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-1 pointer-events-none"
+                            )}>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-300 mb-2">When To Use Study Mode</p>
+                              <p className="text-[11px] text-gray-300 leading-relaxed mb-2">
+                                Use it for technical talks, lectures, tutorials, coding/system design, research breakdowns, or deep analytical discussions.
+                              </p>
+                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 mb-1">Why Use It</p>
+                              <ul className="space-y-1.5 text-[11px] text-gray-400 leading-relaxed">
+                                <li>Deeper concept-level comparison across both videos.</li>
+                                <li>Structured technical verdict with stronger reasoning depth.</li>
+                                <li>Actionable study guidance when content supports it.</li>
+                              </ul>
+                            </div>
+                          </div>
                           <button
                             type="button"
-                            aria-label="Study mode info"
-                            className="w-8 h-8 rounded-xl border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:border-white/20 transition-all flex items-center justify-center"
+                            onClick={handleToggleStudyMode}
+                            aria-label="Toggle study mode"
+                            className={cn(
+                              "relative w-10 h-6 rounded-full border transition-all",
+                              studyModeEnabled
+                                ? "bg-green-500/20 border-green-500/40"
+                                : "bg-white/5 border-white/15"
+                            )}
                           >
-                            <Info className="w-4 h-4" />
+                            <span
+                              className={cn(
+                                "absolute top-0.5 left-0.5 w-[18px] h-[18px] rounded-full bg-white shadow-md transition-transform duration-200",
+                                studyModeEnabled ? "translate-x-4 bg-green-300" : "translate-x-0 bg-white"
+                              )}
+                            />
                           </button>
-                          <div className={cn(
-                            "absolute right-0 top-full mt-2 w-[280px] md:w-[320px] rounded-2xl border border-white/15 bg-[#101219]/95 backdrop-blur-xl p-4 text-left shadow-2xl z-30 transition-all duration-200",
-                            isStudyHintOpen ? "opacity-100 translate-y-0 pointer-events-auto" : "opacity-0 translate-y-1 pointer-events-none"
-                          )}>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-blue-300 mb-2">When To Use Study Mode</p>
-                            <p className="text-[11px] text-gray-300 leading-relaxed mb-2">
-                              Use it for technical talks, lectures, tutorials, coding/system design, research breakdowns, or deep analytical discussions.
-                            </p>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400 mb-1">Why Use It</p>
-                            <ul className="space-y-1.5 text-[11px] text-gray-400 leading-relaxed">
-                              <li>Deeper concept-level comparison across both videos.</li>
-                              <li>Structured technical verdict with stronger reasoning depth.</li>
-                              <li>Actionable study guidance when content supports it.</li>
-                            </ul>
-                          </div>
                         </div>
                       </div>
                       <button
                         type="submit"
                         disabled={!url1.trim() || !url2.trim() || isComparing}
                         className={cn(
-                          "w-full md:w-auto px-6 h-10 md:h-12 md:px-8 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap inline-flex items-center justify-center gap-3",
+                          "w-full md:w-auto md:ml-auto px-6 h-10 md:h-12 md:px-8 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap inline-flex items-center justify-center gap-3",
                           url1.trim() && url2.trim()
                             ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
                             : "bg-white/5 text-gray-700 cursor-not-allowed"
@@ -281,6 +328,10 @@ export function Compare() {
                         <Scale className="w-4 h-4" />
                         Generate
                       </button>
+                    </div>
+                    <div className="text-[10px] text-gray-600 font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+                      <Check className="w-3.5 h-3.5 text-blue-500/40" />
+                      Temporal Syncing Enabled
                     </div>
                   </div>
                 </div>
@@ -315,17 +366,6 @@ export function Compare() {
               </motion.div>
               <ProcessingTerminal status={status || "Initializing"} />
             </div>
-          )}
-
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-center justify-center gap-3 text-sm text-red-400 bg-red-500/5 border border-red-500/10 rounded-2xl px-6 py-4 max-w-2xl mx-auto shadow-2xl"
-            >
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              {error}
-            </motion.div>
           )}
 
           <p className="text-[10px] text-gray-700 mt-20 md:mt-8 font-bold uppercase tracking-widest opacity-30">

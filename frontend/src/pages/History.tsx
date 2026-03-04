@@ -3,6 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { Clock, Scale, Trash2, Edit2, Check, X, ArrowUpRight, Search, Zap, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getHistory, clearHistory, deleteHistoryItem, renameHistoryItem, HistoryItem } from "../lib/history";
+import { cleanupArtifacts } from "../lib/api";
 import { cn } from "../lib/utils";
 import { useToast } from "../components/GlobalToast";
 
@@ -19,8 +20,21 @@ const itemAnim = {
     show: { opacity: 1, y: 0 }
 };
 
+function getCleanupPayload(item: HistoryItem): { sessionId: string | null; videoUrls: string[] } {
+    const result = item?.result || {};
+    const sessionId = result.sessionId || result.session_id || null;
+    const urls = [
+        result.videoUrl,
+        result.url1,
+        result.url2,
+    ].filter((u: unknown) => typeof u === "string" && (u as string).trim().length > 0) as string[];
+    return { sessionId, videoUrls: urls };
+}
+
 export function History() {
+    const PAGE_SIZE = 5;
     const [items, setItems] = useState<HistoryItem[]>([]);
+    const [currentPage, setCurrentPage] = useState(1);
     const [showConfirmClear, setShowConfirmClear] = useState(false);
     const navigate = useNavigate();
     const { showToast } = useToast();
@@ -29,6 +43,17 @@ export function History() {
     useEffect(() => {
         setItems(getHistory());
     }, []);
+
+    const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    const pageStart = (currentPage - 1) * PAGE_SIZE;
+    const pagedItems = items.slice(pageStart, pageStart + PAGE_SIZE);
+    const showPagination = items.length > PAGE_SIZE;
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
 
     const handleItemClick = (item: HistoryItem) => {
         if (!item.result) return;
@@ -39,15 +64,33 @@ export function History() {
         }
     };
 
-    const handleClear = () => {
+    const handleClear = async () => {
+        const cleanupTargets = items
+            .map(getCleanupPayload)
+            .filter((payload) => payload.videoUrls.length > 0);
+        if (cleanupTargets.length > 0) {
+            await Promise.allSettled(
+                cleanupTargets.map((payload) =>
+                    cleanupArtifacts(payload.sessionId, payload.videoUrls, true, true)
+                )
+            );
+        }
         clearHistory();
         setItems([]);
+        setCurrentPage(1);
         setShowConfirmClear(false);
         showToast("History cleared", "success");
     };
 
-    const handleDelete = (id: string, e: React.MouseEvent) => {
+    const handleDelete = async (id: string, e: React.MouseEvent) => {
         e.stopPropagation();
+        const item = items.find((entry) => entry.id === id);
+        if (item) {
+            const payload = getCleanupPayload(item);
+            if (payload.videoUrls.length > 0) {
+                await cleanupArtifacts(payload.sessionId, payload.videoUrls, true, true);
+            }
+        }
         deleteHistoryItem(id);
         const updated = getHistory();
         setItems(updated);
@@ -157,7 +200,7 @@ export function History() {
                     ) : (
                         <div className="space-y-6 lg:space-y-8">
                             <AnimatePresence mode="popLayout">
-                                {items.map((item) => (
+                                {pagedItems.map((item) => (
                                     <motion.div
                                         layout
                                         variants={itemAnim}
@@ -244,6 +287,30 @@ export function History() {
                                     </motion.div>
                                 ))}
                             </AnimatePresence>
+                        </div>
+                    )}
+
+                    {showPagination && (
+                        <div className="mt-8 flex items-center justify-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                                disabled={currentPage === 1}
+                                className="px-4 py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest rounded-xl border border-white/10 bg-white/5 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition-all"
+                            >
+                                Prev
+                            </button>
+                            <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest text-gray-500">
+                                {currentPage} / {totalPages}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                                disabled={currentPage === totalPages}
+                                className="px-4 py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest rounded-xl border border-white/10 bg-white/5 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition-all"
+                            >
+                                Next
+                            </button>
                         </div>
                     )}
                 </motion.div>

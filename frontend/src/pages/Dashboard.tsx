@@ -21,12 +21,25 @@ const itemAnim = {
 };
 
 export function Dashboard() {
-  const [recentItems, setRecentItems] = useState<HistoryItem[]>([]);
+  const PAGE_SIZE = 5;
+  const [allItems, setAllItems] = useState<HistoryItem[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
   const navigate = useNavigate();
 
   useEffect(() => {
-    setRecentItems(getHistory().slice(0, 3));
+    setAllItems(getHistory());
   }, []);
+
+  const totalPages = Math.max(1, Math.ceil(allItems.length / PAGE_SIZE));
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const recentItems = allItems.slice(pageStart, pageStart + PAGE_SIZE);
+  const showPagination = allItems.length > PAGE_SIZE;
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleItemClick = (item: HistoryItem) => {
     if (!item.result) return;
@@ -142,6 +155,30 @@ export function Dashboard() {
                 ))
               )}
             </div>
+
+            {showPagination && (
+              <div className="mt-8 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest rounded-xl border border-white/10 bg-white/5 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition-all"
+                >
+                  Prev
+                </button>
+                <span className="text-[10px] md:text-xs font-bold uppercase tracking-widest text-gray-500">
+                  {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 text-[10px] md:text-xs font-bold uppercase tracking-widest rounded-xl border border-white/10 bg-white/5 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10 transition-all"
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </motion.div>
         </motion.div>
       </div>

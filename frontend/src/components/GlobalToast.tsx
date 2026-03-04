@@ -1,4 +1,4 @@
-import { Check, Info, TriangleAlert, X } from "lucide-react";
+import { AlertCircle, Check, Info, TriangleAlert } from "lucide-react";
 import { createContext, useCallback, useContext, useMemo } from "react";
 import { toast } from "sonner";
 
@@ -11,22 +11,24 @@ interface ToastContextValue {
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 function ToastIcon({ type }: { type: ToastType }) {
-  const styles: Record<ToastType, string> = {
+  const styles: Record<Exclude<ToastType, "error">, string> = {
     success: "bg-emerald-500/20 text-emerald-400 border-emerald-400/30",
-    error: "bg-red-500/20 text-red-400 border-red-400/30",
     info: "bg-sky-500/20 text-sky-400 border-sky-400/30",
     warning: "bg-amber-500/20 text-amber-400 border-amber-400/30",
   };
 
+  if (type === "error") {
+    return <AlertCircle className="w-7 h-7 text-red-400 shrink-0" />;
+  }
+
   const icon = {
     success: <Check className="w-4 h-4" />,
-    error: <X className="w-4 h-4" />,
     info: <Info className="w-4 h-4" />,
     warning: <TriangleAlert className="w-4 h-4" />,
-  }[type];
+  }[type as Exclude<ToastType, "error">];
 
   return (
-    <span className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${styles[type]}`}>
+    <span className={`w-7 h-7 rounded-full border flex items-center justify-center shrink-0 ${styles[type as Exclude<ToastType, "error">]}`}>
       {icon}
     </span>
   );

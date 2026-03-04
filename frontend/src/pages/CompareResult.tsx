@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
     Copy,
-    FlaskConical,
     MessageSquare,
     Play,
     Scale,
@@ -17,7 +16,7 @@ import ReactMarkdown from "react-markdown";
 import ReactPlayer from "react-player";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation, useNavigate } from "react-router-dom";
-import { compareVideos, chatWithVideo, checkTechnicalVideos } from "../lib/api";
+import { compareVideos, checkTechnicalVideos } from "../lib/api";
 import { cn } from "../lib/utils";
 import { useToast } from "../components/GlobalToast";
 
@@ -61,70 +60,6 @@ function TooltipBelow({ text, children, align = "left" }: { text: string; childr
                 "absolute top-full mt-3 px-3 py-1.5 bg-[#0f1115] border border-white/10 rounded-lg text-[10px] text-white font-bold opacity-0 group-hover:opacity-100 transition-all pointer-events-none shadow-2xl z-[200] uppercase tracking-widest scale-95 group-hover:scale-100 origin-top min-w-[100px] max-w-[200px] text-center whitespace-nowrap",
                 posClass
             )}>{text}</div>
-        </div>
-    );
-}
-
-function StudyModeTooltip({ active, children, align = "left" }: { active: boolean; children: React.ReactNode; align?: "left" | "right" | "center" }) {
-    const [show, setShow] = useState(false);
-    const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-    const posClass =
-        align === "right" ? "right-0" :
-            align === "center" ? "left-1/2 -translate-x-1/2" :
-                "left-0";
-
-    const handleTouchStart = () => {
-        timeoutRef.current = setTimeout(() => {
-            setShow(true);
-        }, 500); // 500ms for long press
-    };
-
-    const handleTouchEnd = () => {
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        setShow(false);
-    };
-
-    return (
-        <div className="relative flex items-center justify-center"
-            onMouseEnter={() => setShow(true)}
-            onMouseLeave={() => setShow(false)}
-            onTouchStart={handleTouchStart}
-            onTouchEnd={handleTouchEnd}
-            onContextMenu={(e) => { if (show) e.preventDefault(); }}
-        >
-            {children}
-            <AnimatePresence>
-                {show && (
-                    <motion.div
-                        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                        className={cn(
-                            "absolute bottom-full mb-3 w-64 p-4 bg-[#0a0a0b]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl z-[200] flex flex-col gap-2 pointer-events-none origin-bottom",
-                            posClass
-                        )}
-                    >
-                        <div className="flex items-center gap-2">
-                            <FlaskConical className={cn("w-4 h-4", active ? "text-green-400" : "text-blue-400")} />
-                            <span className="text-[11px] font-bold text-white uppercase tracking-wider">
-                                {active ? "Study Mode Active" : "Deep Study Mode"}
-                            </span>
-                        </div>
-                        <p className="text-[10px] text-gray-400 leading-relaxed font-sans normal-case text-left">
-                            {active
-                                ? "Currently using the upgraded technical analysis pipeline. This focuses on depth, concept extraction, and technical accuracy."
-                                : "Enable for technical or educational content. This triggers a specialized pipeline for deep conceptual analysis and tutorial-level detail."}
-                        </p>
-                        {!active && (
-                            <div className="flex items-center gap-1.5 mt-1 border-t border-white/5 pt-2">
-                                <div className="w-1 h-1 rounded-full bg-blue-500 animate-pulse" />
-                                <span className="text-[9px] text-blue-400 font-mono font-bold uppercase tracking-widest">Recommended for Tech Videos</span>
-                            </div>
-                        )}
-                    </motion.div>
-                )}
-            </AnimatePresence>
         </div>
     );
 }
@@ -203,7 +138,7 @@ const parseVideoIdFromHref = (href: string) => {
 const parseSources = (markdown: string, urlA: string, urlB: string, fallbackSide?: Side) => {
     const idA = extractVideoId(urlA);
     const idB = extractVideoId(urlB);
-    const regex = /\[[^\]]+\]\((https?:\/\/[^\s)]+)\)/g;
+    const regex = /\[[^\]]+\]\(\s*(https?:\/\/[^\s)]+)\s*\)/g;
     const sources: Source[] = [];
     let match: RegExpExecArray | null = null;
     while ((match = regex.exec(markdown)) !== null) {
@@ -253,14 +188,60 @@ const parseEvidence = (content: string, urlA: string, urlB: string): Parsed => {
 };
 
 const normalize = (raw: string) =>
-    (raw || "")
-        .trim()
-        .replace(/^\s*STUDY_MODE\s*:\s*.+$/gim, "")
-        .replace(/^\s*SHORT ANSWER\s*:\s*/gim, "## Verdict\n")
-        .replace(/^\s*DECISION\s*:\s*/gim, "## Recommendation\n")
-        .replace(/^\s*SOURCES\s*:\s*/gim, "## Sources\n")
+    compactStandaloneTimestampLines(
+        dedupeRepeatedTimestampLinks(
+        (raw || "")
+            .trim()
+            .replace(/^\s*STUDY_MODE\s*:\s*.+$/gim, "")
+            .replace(/^\s*SHORT ANSWER\s*:\s*/gim, "## Verdict\n")
+            .replace(/^\s*DECISION\s*:\s*/gim, "## Recommendation\n")
+            .replace(/^\s*SOURCES\s*:\s*/gim, "## Sources\n")
+            .replace(/^\s*,\s*$/gim, "")
+            .replace(/((?:\*\*)?(?:key points|key takeaways|focus moments|study plan|recommendation)(?:\*\*)?:)\s*\n{2,}(?=[-*])/gim, "$1\n")
+            .replace(/\n{3,}/g, "\n\n"))
+            .trim()
+    );
+
+function dedupeRepeatedTimestampLinks(markdown: string): string {
+    if (!markdown) return markdown;
+    const pattern = /\[(\d{1,2}:[0-5]\d)\]\(\s*(https?:\/\/youtu\.be\/[^\s)]+)\s*\)/gi;
+    const seen = new Set<string>();
+    return markdown.replace(pattern, (_match, stamp, url) => {
+        const normalized = String(url || "").trim().toLowerCase();
+        if (seen.has(normalized)) return "";
+        seen.add(normalized);
+        return `[${stamp}](${String(url).trim()})`;
+    }).replace(/[ \t]{2,}/g, " ");
+}
+
+function compactStandaloneTimestampLines(markdown: string): string {
+    if (!markdown) return markdown;
+    const timestampOnlyLine = /^\s*\[\d{1,2}:[0-5]\d\]\(https?:\/\/youtu\.be\/[^\s)]+\)\s*$/i;
+    const lines = markdown.split(/\r?\n/);
+    const out: string[] = [];
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === "," || trimmed === "'" || trimmed === "\"") {
+            if (trimmed === "," || trimmed === "'" || trimmed === "\"") continue;
+            out.push(line);
+            continue;
+        }
+        if (timestampOnlyLine.test(trimmed) && out.length > 0) {
+            let idx = out.length - 1;
+            while (idx >= 0 && !out[idx].trim()) idx -= 1;
+            if (idx >= 0) {
+                out[idx] = `${out[idx].trimEnd()} ${trimmed}`;
+                continue;
+            }
+        }
+        out.push(line);
+    }
+    return out.join("\n")
         .replace(/\n{3,}/g, "\n\n")
+        .replace(/([.!?])\s*\n(\[\d{1,2}:[0-5]\d\]\(https?:\/\/youtu\.be\/[^\s)]+\))/gi, "$1 $2")
         .trim();
+}
 
 const linkifyBareTimestamps = (
     markdown: string,
@@ -304,15 +285,34 @@ const linkifyBareTimestamps = (
 
 const formatClockTime = (ts?: number) => {
     if (!ts) return "";
-    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
+    const value = new Date(ts).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+    });
+    return value.replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
 };
 
 /* ---------- Detect if the user's chat is targeting one video or both ---------- */
 type ChatTarget = "A" | "B" | "BOTH";
+const COMPARISON_QUERY_REGEX =
+    /\b(compare|comparison|better|best|worse|vs|versus|difference|different|unified\s+verdict|which\s+video|which\s+one|cross[-\s]?video)\b/i;
+
+function isComparisonQuestion(question: string): boolean {
+    return COMPARISON_QUERY_REGEX.test(question || "");
+}
+
+function shouldForceDualCompare(question: string, target: ChatTarget): boolean {
+    // Explicit single-video scope should not be overridden by comparative keywords like "best".
+    if (target === "A" || target === "B") return false;
+    return isComparisonQuestion(question);
+}
+
 function detectChatTarget(question: string): ChatTarget {
     const lower = question.toLowerCase();
     const mentionsA = /\bvideo\s*a\b|1st\s*video|first\s*video|\bvdo\s*a\b|\bstream\s*a\b/i.test(lower);
     const mentionsB = /\bvideo\s*b\b|2nd\s*video|second\s*video|\bvdo\s*b\b|\bstream\s*b\b/i.test(lower);
+    if (mentionsA && mentionsB) return "BOTH";
     if (mentionsA && !mentionsB) return "A";
     if (mentionsB && !mentionsA) return "B";
     return "BOTH";
@@ -406,13 +406,13 @@ export function CompareResult() {
         if ((source.side === "A" || (source.videoId && source.videoId === idA)) && playerARef.current) {
             playerARef.current.seekTo(source.timestamp, "seconds");
             setIsPlayingA(true);
-            showToast(`Video A -> ${formatMMSS(source.timestamp)}`, "success");
+            showToast(`Seeking to ${formatMMSS(source.timestamp)}`, "success");
             return;
         }
         if ((source.side === "B" || (source.videoId && source.videoId === idB)) && playerBRef.current) {
             playerBRef.current.seekTo(source.timestamp, "seconds");
             setIsPlayingB(true);
-            showToast(`Video B -> ${formatMMSS(source.timestamp)}`, "success");
+            showToast(`Seeking to ${formatMMSS(source.timestamp)}`, "success");
             return;
         }
         if (source.href) window.open(source.href, "_blank", "noopener,noreferrer");
@@ -422,14 +422,33 @@ export function CompareResult() {
         if (!href) return <span>{children}</span>;
         const sec = parseSeconds(href);
         if (sec === null) return <a href={href} target="_blank" rel="noreferrer" className="text-blue-400 font-bold underline decoration-blue-500/40 underline-offset-4 hover:text-white transition-all">{children}</a>;
+        const idA = extractVideoId(url1);
+        const idB = extractVideoId(url2);
         const parsed = parseSources(`[x](${href})`, url1, url2)[0] || { timestamp: sec, href };
+        const linkVideoId = parseVideoIdFromHref(href);
+        const effectiveSide: Side | undefined =
+            parsed.side ||
+            (linkVideoId && idA && linkVideoId === idA ? "A" : undefined) ||
+            (linkVideoId && idB && linkVideoId === idB ? "B" : undefined);
         return (
-            <button onClick={() => seekToSource(parsed)} className={cn(
-                "text-white font-mono font-bold inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all text-[11px] mx-1",
-                parsed.side === "B" ? "bg-purple-600/20 hover:bg-purple-600/40 border-purple-500/30" : "bg-blue-600/20 hover:bg-blue-600/40 border-blue-500/30"
-            )}>
-                <Play className="w-3 h-3 fill-white" /><span>{formatMMSS(sec)}</span>
-            </button>
+            <span className="group relative inline-flex align-baseline ml-1">
+                <button
+                    type="button"
+                    onClick={() => seekToSource(parsed)}
+                    className={cn(
+                        "text-white font-mono font-bold inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border transition-all text-[11px]",
+                        effectiveSide === "B"
+                            ? "bg-purple-600/20 hover:bg-purple-600/40 border-purple-500/30"
+                            : "bg-blue-600/20 hover:bg-blue-600/40 border-blue-500/30"
+                    )}
+                >
+                    <Play className="w-3 h-3 fill-white" />
+                    <span>{formatMMSS(sec)}</span>
+                </button>
+                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1 bg-[#0f1115] border border-white/10 rounded-md text-[10px] text-white font-bold opacity-0 group-hover:opacity-100 transition-all pointer-events-none shadow-2xl z-[210] whitespace-nowrap">
+                    {`Seek to ${formatMMSS(sec)}`}
+                </span>
+            </span>
         );
     };
 
@@ -441,23 +460,6 @@ export function CompareResult() {
     const handleShare = async () => {
         try { await navigator.clipboard.writeText(window.location.href); showToast("Page URL copied", "success"); }
         catch { showToast("Failed to copy URL", "error"); }
-    };
-
-    const handleToggleStudyMode = async () => {
-        if (!supportsStudyMode) {
-            setIsStudyMode(false);
-            showToast("This pair is not technical enough for Study Mode.", "error");
-            return;
-        }
-
-        if (isStudyMode) {
-            setIsStudyMode(false);
-            showToast("Deep Study Mode Disabled", "success");
-            return;
-        }
-
-        setIsStudyMode(true);
-        showToast("Deep Study Mode Enabled - Analysis pipeline upgraded", "success");
     };
 
     /**
@@ -473,34 +475,27 @@ export function CompareResult() {
         const userId = makeMessageId();
         const aiId = makeMessageId();
         const target = detectChatTarget(question);
+        const forceDualCompare = shouldForceDualCompare(question, target);
+        const effectiveTarget: ChatTarget = forceDualCompare ? "BOTH" : target;
         setChatMessages((prev) => [...prev,
         { id: userId, role: "user", content: question, createdAt: Date.now() },
-        { id: aiId, role: "ai", content: "thinking...", createdAt: Date.now(), targetSide: target },
+        { id: aiId, role: "ai", content: "thinking...", createdAt: Date.now(), targetSide: effectiveTarget },
         ]);
         setChatInput("");
         setIsSending(true);
 
         try {
             let responseText = "";
-            let responseSources: Array<{ timestamp: number; video_id: string }> = [];
+            const responseSources: Array<{ timestamp: number; video_id: string }> = [];
 
-            if (target === "A" && url1) {
-                const result = await chatWithVideo(sessionId, url1.trim(), question);
-                responseText = result.response;
-                responseSources = result.sources || [];
-            } else if (target === "B" && url2) {
-                const result = await chatWithVideo(sessionId, url2.trim(), question);
-                responseText = result.response;
-                responseSources = result.sources || [];
-            } else {
-                // Multi-video: extract timestamps from both videos inline in response
-                const result = await compareVideos(sessionId, url1.trim(), url2.trim(), question, isStudyMode, true);
-                responseText = result.response;
-            }
+            // Always use dual-video chat pipeline on compare page.
+            // Literal scope (Video A/Video B/BOTH) is handled in backend.
+            const result = await compareVideos(sessionId, url1.trim(), url2.trim(), question, isStudyMode, true);
+            responseText = result.response;
 
-            const finalContent = linkifyBareTimestamps(normalize(responseText), url1, url2, target);
+            const finalContent = linkifyBareTimestamps(normalize(responseText), url1, url2, effectiveTarget);
             setChatMessages((prev) => prev.map((m) =>
-                m.id === aiId ? { ...m, content: finalContent, sources: responseSources, targetSide: target, createdAt: Date.now() } : m
+                m.id === aiId ? { ...m, content: finalContent, sources: responseSources, targetSide: effectiveTarget, createdAt: Date.now() } : m
             ));
 
             // Auto-seek for single-video responses with sources
@@ -546,8 +541,8 @@ export function CompareResult() {
                     h3: ({ children }) => <h3 className="text-blue-300 font-bold text-base mt-4 mb-2 font-serif italic">{children}</h3>,
                     p: ({ children }) => <p className="mb-4 text-gray-300 leading-relaxed">{children}</p>,
                     strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
-                    ul: ({ children }) => <ul className="mb-6 list-none p-0 space-y-2">{children}</ul>,
-                    ol: ({ children }) => <ol className="mb-6 list-none p-0 space-y-2">{children}</ol>,
+                    ul: ({ children }) => <ul className="mb-4 list-none p-0 space-y-1.5">{children}</ul>,
+                    ol: ({ children }) => <ol className="mb-4 list-none p-0 space-y-1.5">{children}</ol>,
                     li: ({ children }) => (
                         <li className="flex gap-3 items-start">
                             <Sparkles className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-1" />
@@ -588,7 +583,7 @@ export function CompareResult() {
                             h2: ({ children }) => <span className="block text-white font-bold text-[15px] mt-3 mb-1 font-serif">{children}</span>,
                             h3: ({ children }) => <span className="block text-blue-300 font-bold text-[14px] mt-2 mb-1 font-serif italic">{children}</span>,
                             li: ({ children }) => (
-                                <li className="flex gap-2.5 items-start mb-3 last:mb-0">
+                                <li className="flex gap-2.5 items-start mb-1 last:mb-0">
                                     <Sparkles className="w-3.5 h-3.5 text-blue-500/40 shrink-0 mt-1" />
                                     <span className="text-[13px] leading-relaxed text-gray-300">{children}</span>
                                 </li>
@@ -597,8 +592,6 @@ export function CompareResult() {
                         }}>{
                                 markdownToRender
                                     .replace(/^\s*Source:\s*$/gim, "")
-                                    .replace(/\[https?:\/\/youtu\.be\/[^\s\]]+\]/g, "")
-                                    .replace(/https?:\/\/youtu\.be\/[^\s\]]+/g, "")
                             }</ReactMarkdown>
                     </div>
                     {msg.role === "ai" && msg.content !== "thinking..." && (
@@ -647,7 +640,7 @@ export function CompareResult() {
                     <button onClick={() => handleAsk("Run deep technical analysis and comparison on both videos.")}
                         disabled={isSending || isCheckingTech}
                         className="px-4 py-2 bg-blue-600 text-white border border-blue-500 text-[10px] font-bold rounded-full active:scale-95 transition-all disabled:opacity-50 flex items-center gap-2 shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                        <FlaskConical className="w-3.5 h-3.5" /> Analyze Deep
+                        <Scale className="w-3.5 h-3.5" /> Analyze Deep
                     </button>
                 )}
                 {starterQuestions.map((q) => (
@@ -660,36 +653,17 @@ export function CompareResult() {
     );
 
     const renderChatInput = () => (
-        <div className="shrink-0 p-3 md:p-4 bg-transparent max-w-4xl mx-auto w-full">
+        <div className="shrink-0 px-3 pb-3 pt-0 md:px-4 md:pb-4 md:pt-0 bg-transparent max-w-4xl mx-auto w-full">
             <div className={cn(
                 "w-full mx-auto relative flex items-center gap-2 bg-white/[0.04] border rounded-[1.25rem] px-3 transition-all shadow-inner p-1.5",
                 isStudyMode ? "border-green-500/50 focus-within:border-green-400" : "border-white/10 focus-within:border-blue-500/40"
             )}>
-                {supportsStudyMode && (
-                    <StudyModeTooltip active={isStudyMode} align="left">
-                        <button
-                            onClick={handleToggleStudyMode}
-                            disabled={isCheckingTech || isSending}
-                            className={cn(
-                                "w-9 h-9 flex items-center justify-center rounded-xl transition-all shadow-lg shrink-0 border relative",
-                                isStudyMode
-                                    ? "bg-green-600/20 border-green-500/30 text-green-400 shadow-[0_0_20px_rgba(34,197,94,0.3)]"
-                                    : "bg-white/5 border-white/5 text-gray-400 hover:bg-blue-500/10 hover:border-blue-500/30 hover:text-blue-400",
-                                isCheckingTech && "animate-pulse"
-                            )}
-                        >
-                            <FlaskConical className="w-4 h-4" />
-                            {isStudyMode && <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-green-500 rounded-full animate-ping" />}
-                        </button>
-                    </StudyModeTooltip>
-                )}
-
                 <textarea
                     data-lenis-prevent
                     value={chatInput}
                     onChange={(e) => { setChatInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px'; }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAsk(); (e.target as HTMLTextAreaElement).style.height = 'auto'; } }}
-                    placeholder={supportsStudyMode && isStudyMode ? "Study mode active. Ask deeply technical questions..." : "Ask anything about the videos..."}
+                    placeholder="Ask anything about the videos..."
                     rows={1}
                     className="flex-1 self-end bg-transparent border-none outline-none py-2 px-1 text-[14px] leading-relaxed text-white placeholder:text-gray-600 focus:ring-0 resize-none max-h-[100px] overflow-y-auto touch-auto"
                     disabled={isSending}
@@ -703,13 +677,7 @@ export function CompareResult() {
                     <Send className="w-3.5 h-3.5 fill-white text-white" />
                 </button>
             </div>
-            <p className="mt-2 text-center text-[10px] text-gray-500 leading-relaxed font-mono">
-                {supportsStudyMode && isStudyMode ? (
-                    <span className="text-green-500/70">STUDY PIPELINE VERIFIED • TECHNICAL MODE ON</span>
-                ) : (
-                    ACCURACY_NOTE
-                )}
-            </p>
+            <p className="mt-2 text-center text-[10px] text-gray-500 leading-relaxed font-mono">{ACCURACY_NOTE}</p>
         </div>
     );
 
@@ -914,9 +882,9 @@ export function CompareResult() {
                                                         h3: ({ children }) => <h3 className="text-blue-300 font-bold text-base md:text-lg mt-5 mb-2 font-serif italic">{children}</h3>,
                                                         p: ({ children }) => <p className="mb-4 text-gray-300 text-[14px] md:text-[15px] leading-[1.8]">{children}</p>,
                                                         strong: ({ children }) => <strong className="text-white font-bold">{children}</strong>,
-                                                        ul: ({ children }) => <ul className="mb-6 list-none p-0 space-y-2">{children}</ul>,
+                                                        ul: ({ children }) => <ul className="mb-4 list-none p-0 space-y-1.5">{children}</ul>,
                                                         li: ({ children }) => (
-                                                            <li className="flex gap-3.5 items-start mb-4 last:mb-0 group/li">
+                                                            <li className="flex gap-3.5 items-start mb-2 last:mb-0 group/li">
                                                                 <Sparkles className="w-3 md:w-3.5 h-3 md:h-3.5 text-blue-500/40 shrink-0 mt-1.5 transition-all group-hover/li:text-blue-400" />
                                                                 <span className="text-[13px] md:text-[14px] leading-relaxed text-gray-300 transition-colors group-hover/li:text-white">{children}</span>
                                                             </li>
