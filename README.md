@@ -100,10 +100,6 @@ YoutubeRAGSystem/
     package.json
     .env.example
   notebooks/
-  singleVideo.py                   # reference/prototype script
-  multiVideo.py                    # reference/prototype script
-  PROJECT_CONTEXT_AND_DEMO_GUIDE.md
-  LINKEDIN_POST.txt
   README.md
 ```
 
