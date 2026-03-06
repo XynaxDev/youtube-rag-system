@@ -4,10 +4,14 @@ Replaces the old test2.py approach.
 """
 
 import os
+import logging
 from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 
 load_dotenv()
+# Disable Chroma anonymized telemetry globally to avoid noisy PostHog errors.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
 
 # ─── API Keys ───────────────────────────────────────────────
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")

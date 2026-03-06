@@ -15,9 +15,11 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 
 from app.config import open_router_model
 from app.rag.transcript import (
+    describe_transcript_issue,
     extract_video_id,
     fetch_video_metadata,
     ingest_video_to_chunks,
+    clear_transcript_cache,
 )
 from app.rag.retriever import (
     create_vectorstore_for_video,
@@ -54,6 +56,31 @@ sessions: Dict[str, dict] = {}
 def _format_mmss(seconds: int) -> str:
     clamped = max(0, int(seconds))
     return f"{clamped // 60}:{clamped % 60:02d}"
+
+
+def _transcript_unavailable_message(video_id: str) -> str:
+    return describe_transcript_issue(video_id)
+
+
+def _looks_not_found_response(text: str) -> bool:
+    if not text:
+        return False
+    t = text.strip().lower()
+    patterns = [
+        r"\bthat isn't discussed here\b",
+        r"\bnot discussed\b",
+        r"\bnot covered\b",
+        r"\bnot explicitly\b",
+        r"\bnot directly addressed\b",
+        r"\bno direct statement\b",
+        r"\bnot shown\b",
+        r"\bnot present\b",
+        r"\bnot found in (?:video|transcript|evidence)\b",
+        r"\bdoes not mention\b",
+        r"\bdoesn't mention\b",
+        r"\bout of range\b",
+    ]
+    return any(re.search(p, t) for p in patterns)
 
 
 def get_or_create_session(session_id: Optional[str] = None) -> str:
@@ -279,6 +306,10 @@ RAG_PROMPT = PromptTemplate(
     11. If the user asks for unrelated tasks (for example coding, debugging, math solving, translation, or writing outside this video), do not perform the task and respond with one short sentence only, without summarizing the video.
     12. For ordered or verification questions (for example first/last/true/false claims), resolve using chronology in the evidence and explicitly match the asked person/subject before answering.
     13. If the user asks for a time beyond the available transcript range, clearly say it is out of range and do not provide any timestamp.
+    14. Do not dump transcript text or long copied lines; synthesize into human-understandable insight.
+    15. Use Markdown emphasis for key entities, numbers, and conclusions (for example **secrecy**, **Manhattan Project**, **17:16**).
+    16. When the question is very specific, you may include at most one short direct quote (max ~15 words) to support the insight.
+    17. Keep formatting clean: short paragraphs or tight bullets, with no unnecessary blank sections.
     """,
     input_variables=[
         "context",
@@ -380,7 +411,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
 
     if not chunks or vectorstore is None:
         return {
-            "response": f"Transcript not available for video {video_id}. Please provide a video with captions.",
+            "response": _transcript_unavailable_message(video_id),
             "intent": "ERROR",
             "sources": [],
         }
@@ -475,7 +506,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
 
     # RAG mode
     retrieval_query = message
-    retrieval_k = max(6, processed["dynamic_k"] + 1) + (2 if is_precise else 0)
+    retrieval_k = max(6, processed["dynamic_k"] + 1) + (3 if is_precise else 0)
     retriever = build_self_query_retriever(vectorstore, retrieval_k)
     retrieved_docs = []
     try:
@@ -519,20 +550,24 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         diverse_docs = []
 
     # Dynamic lexical fallback: recover specific discussion moments (entities/terms) when semantic retrieval misses.
+    lexical_budget = max(8, retrieval_k + 2) if is_precise else max(4, retrieval_k)
+    lexical_focus_budget = max(6, retrieval_k) if is_precise else max(3, retrieval_k // 2)
     lexical_docs = _keyword_match_docs(
         chunks=processed["chunks"],
         query=message,
-        max_docs=max(4, retrieval_k),
+        max_docs=lexical_budget,
     )
     lexical_focus_docs = _keyword_match_docs(
         chunks=processed["chunks"],
         query=focus_query,
-        max_docs=max(3, retrieval_k // 2),
+        max_docs=lexical_focus_budget,
     )
+    has_lexical_evidence = bool(lexical_docs or lexical_focus_docs)
 
     # Time-aware supplemental retrieval: add a time-window search when timestamp response is requested.
     time_seconds = explicit_time_seconds
     time_docs = []
+    local_time_docs = []
     if include_timestamps and time_seconds is not None and not is_time_out_of_range:
         time_docs = _fetch_time_window_docs(
             vectorstore=vectorstore,
@@ -540,6 +575,17 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
             sec=time_seconds,
             k=retrieval_k,
         )
+        # Deterministic local fallback near requested time to avoid drifting chips.
+        try:
+            ordered_by_time = sorted(
+                processed["chunks"],
+                key=lambda d: abs(
+                    int((d.metadata or {}).get("start", 0) or 0) - int(time_seconds)
+                ),
+            )
+            local_time_docs = ordered_by_time[: min(6, max(3, retrieval_k // 2))]
+        except Exception:
+            local_time_docs = []
 
     retrieved_docs = _merge_unique_docs(
         retrieved_docs,
@@ -549,6 +595,7 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         lexical_docs,
         lexical_focus_docs,
         time_docs,
+        local_time_docs,
     )
 
     # Filter and format: preserve retriever output when quality heuristics are strict.
@@ -657,6 +704,48 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
             support.status == "NOT_FOUND_OR_OUT_OF_SCOPE"
         )
         if is_not_found_or_out_of_scope:
+            rescue_ranked = _rank_docs_for_query(
+                processed["chunks"],
+                ranking_query,
+                max_docs=min(max(12, retrieval_k * 2), 28),
+            )
+            retry_docs = _merge_unique_docs(
+                lexical_docs,
+                lexical_focus_docs,
+                rescue_ranked,
+                seed_docs,
+                context_docs,
+            )[: max(18, retrieval_k * 3)]
+            if retry_docs:
+                retry_context = "\n\n".join(
+                    [f"[{d.metadata['start']}s]: {d.page_content}" for d in retry_docs]
+                )
+                retry_result = rag_chain.invoke(
+                    {
+                        "context": retry_context,
+                        "question": message,
+                        "chat_history": history_str,
+                        "video_summary": metadata.get("title", "this video"),
+                        "timestamp_guidance": timestamp_guidance,
+                        "precision_guidance": (
+                            precision_guidance
+                            + " Evidence appears relevant; prefer direct factual answer when supported."
+                        ),
+                    }
+                )
+                retry_support = classify_answer_support(
+                    question=message,
+                    answer=retry_result,
+                    video_summary=(
+                        f"{metadata.get('title', 'this video')}\n"
+                        f"{str(metadata.get('description', ''))[:600]}"
+                    ),
+                )
+                if retry_support.status == "SUPPORTED":
+                    result = retry_result
+                    is_not_found_or_out_of_scope = False
+
+        if is_not_found_or_out_of_scope and not (has_lexical_evidence or retry_docs):
             result = f"That isn't discussed here. This video focuses on {video_focus}."
 
         history.add_user_message(message)
@@ -671,9 +760,15 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
         evidence_ts = _pick_evidence_timestamp_for_answer(
             question=message,
             answer=result,
-            docs=processed["chunks"],
+            docs=candidate_docs,
             fallback_timestamp=timestamp,
         )
+        query_aligned_ts = None
+        if explicit_time_seconds is not None and not is_time_out_of_range:
+            query_aligned_ts = _pick_closest_timestamp(explicit_time_seconds, candidate_docs)
+            if query_aligned_ts is not None:
+                chosen_ts = int(query_aligned_ts)
+
         if mentioned_ts is not None:
             aligned = _pick_closest_timestamp(mentioned_ts, candidate_docs)
             # Keep UI chip synchronized with explicit answer timestamps.
@@ -686,11 +781,31 @@ def chat_with_video(session_id: str, video_url: str, message: str) -> dict:
                 chosen_ts = mentioned_ts
         else:
             chosen_ts = evidence_ts
+
+        # If user asked a specific timestamp window, avoid far-away chip drift.
+        if (
+            explicit_time_seconds is not None
+            and not is_time_out_of_range
+            and chosen_ts is not None
+            and abs(int(chosen_ts) - int(explicit_time_seconds)) > 720
+        ):
+            if query_aligned_ts is not None:
+                chosen_ts = int(query_aligned_ts)
+
+        # For explicit time queries, prefer emitting the grounded chip even if the
+        # support classifier is conservative, as long as the answer is not a clear
+        # "not found" response and we resolved a valid timestamp.
         should_emit_source = (
             bool(candidate_docs)
             and include_timestamps
             and not is_time_out_of_range
-            and not is_not_found_or_out_of_scope
+            and not _looks_not_found_response(result)
+            and chosen_ts is not None
+            and int(chosen_ts) > 0
+            and (
+                explicit_time_seconds is not None
+                or not is_not_found_or_out_of_scope
+            )
         )
         if should_emit_source:
             sources = [{"timestamp": int(chosen_ts), "video_id": video_id}]
@@ -716,7 +831,7 @@ def summarize_video(session_id: str, video_url: str) -> dict:
 
     if not chunks:
         return {
-            "summary": f"Transcript not available for video {video_id}.",
+            "summary": _transcript_unavailable_message(video_id),
             "video_info": metadata,
             "starter_questions": [],
         }
@@ -770,10 +885,15 @@ def cleanup_video_artifacts(
             sessions.pop(session_id, None)
 
     removed_persisted_indexes = 0
+    removed_transcript_caches = 0
     if drop_persisted:
         for video_id in video_ids:
             if delete_persisted_video_index(video_id, collection_name=f"youtube-{video_id}"):
                 removed_persisted_indexes += 1
+
+    for video_id in video_ids:
+        if clear_transcript_cache(video_id):
+            removed_transcript_caches += 1
 
     return {
         "video_ids": video_ids,
@@ -781,6 +901,7 @@ def cleanup_video_artifacts(
         "removed_summary_entries": removed_summary_entries,
         "removed_starter_entries": removed_starter_entries,
         "removed_persisted_indexes": removed_persisted_indexes,
+        "removed_transcript_caches": removed_transcript_caches,
         "session_removed": bool(drop_session and session_id),
     }
 

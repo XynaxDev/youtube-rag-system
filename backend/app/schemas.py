@@ -9,6 +9,7 @@ from pydantic import BaseModel
 # ─── Requests ─────────────────────────────────────────────────
 class ProcessVideoRequest(BaseModel):
     url: str
+    session_id: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
@@ -54,6 +55,7 @@ class ProcessVideoResponse(BaseModel):
     description: str
     status: str
     chunk_count: int
+    error_message: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -87,6 +89,7 @@ class CleanupResponse(BaseModel):
     removed_summary_entries: int = 0
     removed_starter_entries: int = 0
     removed_persisted_indexes: int = 0
+    removed_transcript_caches: int = 0
     session_removed: bool = False
 
 

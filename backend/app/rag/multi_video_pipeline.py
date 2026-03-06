@@ -64,6 +64,7 @@ Rules:
 ## Video A Snapshot
 ## Video B Snapshot
 ## Cross-Video Verdict
+## Key Points
 4) If learning-context recommendation is enabled, include:
 ## Recommendation
 with chosen video and concise reasons.
@@ -73,8 +74,12 @@ with 4-6 actionable bullets.
 6) For non-learning/entertainment context, DO NOT provide study plan and DO NOT provide learning recommendation.
 7) Use inline timestamp links for concrete claims whenever available in this exact format:
    [m:ss](https://youtu.be/<video_id>?t=<seconds>s)
+7.1) In ## Key Points, include 4-6 concise bullets and attach timestamp links where evidence exists.
 8) If information is missing, state: Not found in video transcript or metadata.
 9) Keep concise but complete.
+10) Do not paste raw transcript chunks; explain insights in clear, user-friendly language.
+11) Use Markdown emphasis for key terms, names, and numbers.
+12) If needed for precision, include only very short quotes (about 10-15 words), not long transcript blocks.
 """
 
 DUAL_CHAT_PROMPT = """
@@ -140,12 +145,20 @@ Rules:
       - avoid generic definitions unless asked.
 10.2) If query_kind is COMMON:
       - Output this structure:
+        **Answer:** <2-3 concise lines that summarize what both videos say>
+        **Video A [{title_a}]**
+        - <1-2 concise lines from Video A with inline timestamp at sentence end when available>
+        **Video B [{title_b}]**
+        - <1-2 concise lines from Video B with inline timestamp at sentence end when available>
         **Common Themes:**
-        - <theme sentence with inline timestamp links at sentence end>
+      - <theme sentence with inline timestamp links at sentence end>
       - Keep 3-5 concise bullets.
       - Use evidence from BOTH videos when available.
       - Prefer pairing one Video A and one Video B timestamp across the bullet list.
 11) Be conversational but factual and concise.
+12) Do not dump transcript text; convert evidence into short, understandable insights.
+13) Use Markdown emphasis for key entities, numbers, and takeaways.
+14) If you quote, keep it very short (about 10-15 words) and only when it clarifies a specific claim.
 """
 
 INTENT_PROMPT = """
@@ -237,6 +250,16 @@ def _is_common_theme_question(question: str) -> bool:
     return bool(
         re.search(
             r"\b(common|shared|similarit(?:y|ies)|overlap|both\s+videos|in\s+both|what\s+is\s+common|things\s+discussed\s+in\s+both)\b",
+            q,
+        )
+    )
+
+
+def _is_explicit_both_request(question: str) -> bool:
+    q = (question or "").lower()
+    return bool(
+        re.search(
+            r"\b(in\s+both|both\s+videos?|both\s+vdos?|each\s+video|video\s*a\s*(?:and|&)\s*video\s*b|video\s*b\s*(?:and|&)\s*video\s*a)\b",
             q,
         )
     )
@@ -625,11 +648,51 @@ def _strip_source_header(text: str) -> str:
 
 def _ensure_answer_prefix(text: str) -> str:
     if not text:
-        return "Answer: "
+        return "**Answer:** "
     stripped = text.strip()
+    if re.match(r"(?is)^\s*(?:\*\*)?source(?:\*\*)?\s*:", stripped):
+        if re.search(r"(?im)^\s*(?:\*\*)?answer(?:\*\*)?\s*:", stripped):
+            return stripped
+        m = re.match(
+            r"(?is)^\s*((?:\*\*)?source(?:\*\*)?\s*:\s*[^\n]+)\s*(.*)$",
+            stripped,
+        )
+        if m:
+            header = m.group(1).strip()
+            body = (m.group(2) or "").strip()
+            return f"{header}\n\n**Answer:** {body}".strip()
     if re.match(r"(?is)^\s*(?:\*\*)?answer(?:\*\*)?\s*:", stripped):
         return stripped
-    return f"Answer: {stripped}"
+    return f"**Answer:** {stripped}"
+
+
+def _ensure_common_overview(text: str, title_a: str, title_b: str) -> str:
+    """Ensure BOTH/common responses include a short top description before detailed bullets."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return (
+            f"**Answer:** Both videos discuss this topic from complementary angles. "
+            f"**{title_a}** and **{title_b}** provide different evidence and emphasis."
+        )
+
+    if re.match(r"(?is)^\s*\*\*Video A\b", stripped):
+        return (
+            f"**Answer:** Both videos discuss this topic from complementary angles. "
+            f"**{title_a}** and **{title_b}** highlight different aspects.\n\n{stripped}"
+        )
+
+    if re.match(
+        r"(?is)^\s*\*\*Answer:\*\*\s*(?:\n|$)\s*\*\*Video A\b",
+        stripped,
+    ):
+        answerless = re.sub(r"(?is)^\s*\*\*Answer:\*\*\s*", "", stripped).strip()
+        return (
+            f"**Answer:** Both videos discuss this topic from complementary angles. "
+            f"**{title_a}** and **{title_b}** highlight different aspects.\n\n"
+            f"{answerless}"
+        )
+
+    return stripped
 
 
 def _remove_opposite_scope_section(text: str, query_scope: str) -> str:
@@ -674,7 +737,11 @@ def _retrieve_docs_for_video(proc: Dict[str, Any], question: str, fast_mode: boo
         return []
 
     dynamic_k = int(proc.get("dynamic_k") or 5)
-    retrieval_k = max(4, dynamic_k if fast_mode else dynamic_k + 1)
+    retrieval_k = (
+        max(3, min(6, dynamic_k))
+        if fast_mode
+        else max(4, dynamic_k + 1)
+    )
     query = question.strip() or "video summary"
 
     docs: List[Any] = []
@@ -698,7 +765,7 @@ def _retrieve_docs_for_video(proc: Dict[str, Any], question: str, fast_mode: boo
     try:
         if focus_query and focus_query != dense_query:
             focus_docs = vectorstore.similarity_search(
-                focus_query, k=min(retrieval_k + 2, 12)
+                focus_query, k=min(retrieval_k + (1 if fast_mode else 2), 8 if fast_mode else 12)
             )
     except Exception:
         focus_docs = []
@@ -733,7 +800,7 @@ def _retrieve_docs_for_video(proc: Dict[str, Any], question: str, fast_mode: boo
         seed_docs=seed,
         all_chunks=chunks,
         radius=1 if fast_mode else 2,
-        max_docs=min(max(8, retrieval_k * 2), 16 if fast_mode else 18),
+        max_docs=min(max(8, retrieval_k * 2), 12 if fast_mode else 18),
     )
     contextual = merge_unique_docs(seed, expanded)
     return contextual or seed
@@ -752,6 +819,9 @@ def run_multi_video_pipeline(
     video_id_a = str(meta_a.get("video_id") or "")
     video_id_b = str(meta_b.get("video_id") or "")
     query_scope = _detect_query_scope(question) if is_chat else "BOTH"
+    explicit_both_request = _is_explicit_both_request(question) if is_chat else False
+    if explicit_both_request:
+        query_scope = "BOTH"
     original_query_scope = query_scope
     query_kind = (
         "COMPARATIVE"
@@ -778,7 +848,13 @@ def run_multi_video_pipeline(
         docs_b = _retrieve_docs_for_video(proc_b, question, fast_mode=is_chat)
     missing_side_note = ""
 
-    if is_chat and query_scope == "BOTH" and not _is_comparative_question(question):
+    if (
+        is_chat
+        and query_scope == "BOTH"
+        and not _is_comparative_question(question)
+        and query_kind != "COMMON"
+        and not explicit_both_request
+    ):
         primary_side = _infer_primary_side_for_question(
             question=question,
             docs_a=docs_a,
@@ -796,12 +872,17 @@ def run_multi_video_pipeline(
                 missing_side_note = "**Video A:** That is not discussed here in this video."
 
     # If only one side has usable evidence, route to that side and explicitly note the missing side.
-    if is_chat and query_scope == "BOTH":
+    if is_chat and query_scope == "BOTH" and not explicit_both_request:
         if docs_a and not docs_b:
             query_scope = "VIDEO_A_ONLY"
             missing_side_note = "**Video B:** That is not discussed here in this video."
         elif docs_b and not docs_a:
             query_scope = "VIDEO_B_ONLY"
+            missing_side_note = "**Video A:** That is not discussed here in this video."
+    elif is_chat and query_scope == "BOTH" and explicit_both_request:
+        if docs_a and not docs_b:
+            missing_side_note = "**Video B:** That is not discussed here in this video."
+        elif docs_b and not docs_a:
             missing_side_note = "**Video A:** That is not discussed here in this video."
 
     if is_chat:
@@ -885,6 +966,8 @@ def run_multi_video_pipeline(
 
     if is_chat:
         response_text = _remove_opposite_scope_section(response_text, query_scope)
+        if query_scope == "BOTH":
+            response_text = _strip_source_header(response_text)
         if _is_explicit_scope_request(question, query_scope):
             response_text = _strip_source_header(response_text)
         else:
@@ -926,6 +1009,12 @@ def run_multi_video_pipeline(
         if _looks_not_found_response(response_text):
             response_text = _strip_timestamp_links(response_text)
         response_text = _ensure_answer_prefix(response_text)
+        if query_scope == "BOTH" and query_kind == "COMMON":
+            response_text = _ensure_common_overview(
+                response_text,
+                meta_a.get("title", "Video A"),
+                meta_b.get("title", "Video B"),
+            )
         response_text = _dedupe_timestamp_links(response_text)
 
     response_text = re.sub(

@@ -28,6 +28,7 @@ from app.rag.pipeline import (
     cleanup_video_artifacts,
 )
 from app.rag.compare_service import compare_videos, check_technical_videos
+from app.rag.transcript import describe_transcript_issue
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -42,11 +43,13 @@ async def health_check():
 async def process_video_endpoint(req: ProcessVideoRequest):
     """Process a YouTube video: fetch transcript, create embeddings."""
     try:
-        session_id = get_or_create_session()
+        session_id = get_or_create_session(req.session_id)
         result = process_video(session_id, req.url)
 
         metadata = result["metadata"]
         chunks = result["chunks"]
+        status = "processed" if chunks else "no_transcript"
+        error_message = None if chunks else describe_transcript_issue(result["video_id"])
 
         return ProcessVideoResponse(
             session_id=session_id,
@@ -55,8 +58,9 @@ async def process_video_endpoint(req: ProcessVideoRequest):
             channel=metadata.get("channel", "Unknown"),
             date=metadata.get("date", "Unknown"),
             description=metadata.get("description", ""),
-            status="processed" if chunks else "no_transcript",
+            status=status,
             chunk_count=len(chunks),
+            error_message=error_message,
         )
     except Exception as e:
         logger.exception("Error processing video: %s", e)
@@ -136,6 +140,7 @@ async def cleanup_endpoint(req: CleanupRequest):
             removed_summary_entries=result.get("removed_summary_entries", 0),
             removed_starter_entries=result.get("removed_starter_entries", 0),
             removed_persisted_indexes=result.get("removed_persisted_indexes", 0),
+            removed_transcript_caches=result.get("removed_transcript_caches", 0),
             session_removed=result.get("session_removed", False),
         )
     except Exception as e:

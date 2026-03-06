@@ -8,13 +8,27 @@ import logging
 from typing import List, Optional, Dict, Tuple
 
 from langchain_core.documents import Document
-from langchain_community.vectorstores import Chroma
-from langchain_classic.retrievers.self_query.base import SelfQueryRetriever
-from langchain_classic.chains.query_constructor.base import (
-    AttributeInfo,
-    load_query_constructor_runnable,
-)
+try:
+    from langchain_chroma import Chroma
+except Exception:  # pragma: no cover - compatibility fallback
+    from langchain_community.vectorstores import Chroma
+try:
+    from langchain.retrievers.self_query.base import SelfQueryRetriever
+    from langchain.chains.query_constructor.base import (
+        AttributeInfo,
+        load_query_constructor_runnable,
+    )
+except Exception:  # pragma: no cover - compatibility fallback
+    from langchain_classic.retrievers.self_query.base import SelfQueryRetriever
+    from langchain_classic.chains.query_constructor.base import (
+        AttributeInfo,
+        load_query_constructor_runnable,
+    )
 from langchain_community.query_constructors.chroma import ChromaTranslator
+try:
+    from chromadb.config import Settings as ChromaSettings
+except Exception:  # pragma: no cover - optional import safety
+    ChromaSettings = None
 
 from app.config import open_router_model, CHROMA_PERSIST_DIR
 from app.rag.embeddings import embeddings, validate_chunks_for_embeddings
@@ -56,6 +70,16 @@ query_constructor = load_query_constructor_runnable(
 )
 
 
+def _chroma_client_settings():
+    """Disable noisy telemetry events and keep local persistence behavior stable."""
+    if ChromaSettings is None:
+        return None
+    try:
+        return ChromaSettings(anonymized_telemetry=False)
+    except Exception:
+        return None
+
+
 def _resolve_collection_name(video_id: str, collection_name: Optional[str]) -> str:
     return collection_name or f"youtube-transcript-{video_id}"
 
@@ -87,12 +111,15 @@ def create_vectorstore_for_video(
         logger.warning("No valid chunks after validation for video %s", video_id)
         return None
 
-    return Chroma.from_documents(
-        validated,
-        embeddings,
-        collection_name=collection_name,
-        persist_directory=CHROMA_PERSIST_DIR,
-    )
+    chroma_kwargs = {
+        "collection_name": collection_name,
+        "persist_directory": CHROMA_PERSIST_DIR,
+    }
+    settings = _chroma_client_settings()
+    if settings is not None:
+        chroma_kwargs["client_settings"] = settings
+
+    return Chroma.from_documents(validated, embeddings, **chroma_kwargs)
 
 
 def build_self_query_retriever(
@@ -122,10 +149,17 @@ def load_persisted_video_index(
     collection_name = _resolve_collection_name(video_id, collection_name)
 
     try:
+        chroma_kwargs = {
+            "collection_name": collection_name,
+            "embedding_function": embeddings,
+            "persist_directory": CHROMA_PERSIST_DIR,
+        }
+        settings = _chroma_client_settings()
+        if settings is not None:
+            chroma_kwargs["client_settings"] = settings
+
         vectorstore = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=CHROMA_PERSIST_DIR,
+            **chroma_kwargs,
         )
         count = int(vectorstore._collection.count()) if vectorstore._collection else 0
         if count <= 0:
@@ -161,10 +195,17 @@ def delete_persisted_video_index(
     collection_name = _resolve_collection_name(video_id, collection_name)
 
     try:
+        chroma_kwargs = {
+            "collection_name": collection_name,
+            "embedding_function": embeddings,
+            "persist_directory": CHROMA_PERSIST_DIR,
+        }
+        settings = _chroma_client_settings()
+        if settings is not None:
+            chroma_kwargs["client_settings"] = settings
+
         vectorstore = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=CHROMA_PERSIST_DIR,
+            **chroma_kwargs,
         )
         vectorstore.delete_collection()
         logger.info(
