@@ -1,6 +1,7 @@
 # ─── Environment ──────────────────────
 .env
 backend/.env
+backend/venv
 
 # ─── Python ───────────────────────────
 __pycache__/
@@ -18,6 +19,7 @@ clipiq/node_modules/
 
 # ─── Ollama / ChromaDB ───────────────
 backend/.chroma_db/
+backend/.transcript_cache/
 
 # ─── IDE ──────────────────────────────
 .vscode/
