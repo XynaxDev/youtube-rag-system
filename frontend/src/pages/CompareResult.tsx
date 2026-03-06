@@ -197,6 +197,7 @@ const normalize = (raw: string) =>
             .replace(/^\s*DECISION\s*:\s*/gim, "## Recommendation\n")
             .replace(/^\s*SOURCES\s*:\s*/gim, "## Sources\n")
             .replace(/^\s*,\s*$/gim, "")
+            .replace(/(\n\s*[-*]\s[^\n]*)\n{2,}(?=\s*[-*]\s)/g, "$1\n")
             .replace(/((?:\*\*)?(?:key points|key takeaways|focus moments|study plan|recommendation)(?:\*\*)?:)\s*\n{2,}(?=[-*])/gim, "$1\n")
             .replace(/\n{3,}/g, "\n\n"))
             .trim()
@@ -216,7 +217,7 @@ function dedupeRepeatedTimestampLinks(markdown: string): string {
 
 function compactStandaloneTimestampLines(markdown: string): string {
     if (!markdown) return markdown;
-    const timestampOnlyLine = /^\s*\[\d{1,2}:[0-5]\d\]\(https?:\/\/youtu\.be\/[^\s)]+\)\s*$/i;
+    const timestampOnlyLine = /^\s*\[\d{1,2}:[0-5]\d\]\(https?:\/\/youtu\.be\/[^\s)]+\)\s*\.?\s*$/i;
     const lines = markdown.split(/\r?\n/);
     const out: string[] = [];
 
@@ -231,7 +232,8 @@ function compactStandaloneTimestampLines(markdown: string): string {
             let idx = out.length - 1;
             while (idx >= 0 && !out[idx].trim()) idx -= 1;
             if (idx >= 0) {
-                out[idx] = `${out[idx].trimEnd()} ${trimmed}`;
+                const normalizedTs = trimmed.replace(/\s*\.\s*$/, "");
+                out[idx] = `${out[idx].trimEnd()} ${normalizedTs}`;
                 continue;
             }
         }
@@ -571,19 +573,19 @@ export function CompareResult() {
                 )}
                 <div className={cn("flex flex-col min-w-0 gap-2", msg.role === "user" ? "max-w-[50%] items-end ml-auto" : "max-w-[92%] items-start")}>
                     <div className={cn(
-                        "px-5 py-4 rounded-[1.25rem] shadow-xl relative transition-all w-fit min-w-0 break-words whitespace-pre-wrap [overflow-wrap:anywhere]",
+                        "px-5 py-4 rounded-[1.25rem] shadow-xl relative transition-all w-fit min-w-0 break-words [overflow-wrap:anywhere]",
                         msg.role === "user"
-                            ? "bg-blue-600 text-white rounded-tr-none font-medium text-[14px]"
+                            ? "bg-blue-600 text-white rounded-tr-none font-medium text-[14px] whitespace-pre-wrap"
                             : "bg-[#111113] border border-white/10 text-gray-200 rounded-tl-none text-[14px] leading-relaxed"
                     )}>
                         <ReactMarkdown components={{
-                            p: ({ children }) => <p className="m-0">{children}</p>,
-                            ul: ({ children }) => <ul className="m-0 list-none p-0 space-y-1.5">{children}</ul>,
+                            p: ({ children }) => <p className="m-0 leading-relaxed">{children}</p>,
+                            ul: ({ children }) => <ul className="m-0 list-none p-0 space-y-1">{children}</ul>,
                             h1: ({ children }) => <span className="block text-white font-bold text-base mt-3 mb-1 font-serif">{children}</span>,
                             h2: ({ children }) => <span className="block text-white font-bold text-[15px] mt-3 mb-1 font-serif">{children}</span>,
                             h3: ({ children }) => <span className="block text-blue-300 font-bold text-[14px] mt-2 mb-1 font-serif italic">{children}</span>,
                             li: ({ children }) => (
-                                <li className="flex gap-2.5 items-start mb-1 last:mb-0">
+                                <li className="flex gap-2.5 items-start mb-0.5 last:mb-0">
                                     <Sparkles className="w-3.5 h-3.5 text-blue-500/40 shrink-0 mt-1" />
                                     <span className="text-[13px] leading-relaxed text-gray-300">{children}</span>
                                 </li>

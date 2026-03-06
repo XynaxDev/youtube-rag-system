@@ -1,9 +1,10 @@
 import { useState, useEffect, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link2, ArrowRight, Sparkles, AlertCircle, Loader2 } from "lucide-react";
+import { Link2, ArrowRight, Sparkles, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLenis } from "lenis/react";
 import { cn } from "../lib/utils";
+import { useToast } from "../components/GlobalToast";
 import { processVideo, summarizeVideo } from "../lib/api";
 import { saveHistory } from "../lib/history";
 
@@ -70,16 +71,16 @@ export function Summarize() {
   const [url, setUrl] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
   const navigate = useNavigate();
   const lenis = useLenis();
+  const { showToast } = useToast();
 
   // Summarize content sits near viewport height; keep Lenis bounds fresh on state/layout changes.
   useEffect(() => {
     requestAnimationFrame(() => {
       lenis?.resize();
     });
-  }, [lenis, isAnalyzing, error, status]);
+  }, [lenis, isAnalyzing, status]);
 
   useEffect(() => {
     if (!("fonts" in document)) return;
@@ -95,14 +96,16 @@ export function Summarize() {
     if (!url) return;
 
     setIsAnalyzing(true);
-    setError("");
-
     try {
       setStatus("Processing video...");
       const processResult = await processVideo(url);
 
       if (processResult.status === "no_transcript") {
-        setError("No transcript available for this video. Please try a video with captions enabled.");
+        showToast(
+          processResult.error_message ||
+            "Transcript is unavailable right now. Please try again shortly.",
+          "error"
+        );
         setIsAnalyzing(false);
         return;
       }
@@ -135,7 +138,7 @@ export function Summarize() {
         state: resultData,
       });
     } catch (err: any) {
-      setError(err.message || "Something went wrong. Please try again.");
+      showToast(err.message || "Something went wrong. Please try again.", "error");
       setIsAnalyzing(false);
     }
   };
@@ -171,10 +174,10 @@ export function Summarize() {
               </div>
 
               <form onSubmit={handleSummarize} className="relative max-w-2xl mx-auto mt-8 md:mt-12 group px-4 md:px-0">
-                <div className="relative flex flex-col sm:flex-row items-stretch sm:items-center bg-[#0a0a0a] border border-white/10 rounded-[1.25rem] sm:rounded-[1.5rem] p-2 focus-within:border-blue-500/40 transition-all shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] gap-2 sm:gap-0">
+                <div className="relative flex flex-col sm:flex-row items-center bg-white/[0.03] border border-white/10 rounded-full p-2 backdrop-blur-xl transition-all focus-within:ring-4 focus-within:ring-blue-500/10 focus-within:border-blue-500/30 gap-2">
                   <div className="flex items-center flex-1 px-2">
-                    <div className="pl-3 pr-3 text-gray-600 group-focus-within:text-blue-500 transition-colors shrink-0">
-                      <Link2 className="w-5 h-5" />
+                    <div className="pl-4 pr-2 text-white/40 group-focus-within:text-blue-500 transition-colors shrink-0 relative z-10">
+                      <Link2 className="w-4 h-4" />
                     </div>
                     <input
                       type="url"
@@ -190,13 +193,30 @@ export function Summarize() {
                     type="submit"
                     disabled={!url || isAnalyzing}
                     className={cn(
-                      "sm:ml-2 px-6 h-10 md:h-12 md:px-8 md:py-3.5 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap",
+                      "relative group h-10 md:h-12 pl-2 pr-8 rounded-full transition-all duration-500 active:scale-[0.97] overflow-hidden shrink-0",
                       url && !isAnalyzing
-                        ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
-                        : "bg-white/5 text-gray-700 cursor-not-allowed"
+                        ? "bg-white text-black shadow-[0_10px_20px_-10px_rgba(0,0,0,0.5)]"
+                        : "bg-white/5 text-gray-700 cursor-not-allowed border border-white/5"
                     )}
                   >
-                    Generate
+                    <div className="relative z-10 flex items-center justify-center gap-2 transition-colors duration-500">
+                      <div className={cn(
+                        "w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all duration-500 bg-black/[0.03] group-hover:bg-blue-600",
+                        !url || isAnalyzing ? "bg-white/5" : ""
+                      )}>
+                        {isAnalyzing ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-black/50" />
+                        ) : (
+                          <Sparkles className={cn("w-3.5 h-3.5 transition-colors", url && !isAnalyzing ? "text-blue-600 group-hover:text-white" : "text-gray-800")} />
+                        )}
+                      </div>
+                      <span className="text-[11px] font-bold tracking-[0.05em] uppercase font-display">
+                        {isAnalyzing ? "PROCESSING..." : "GENERATE ANALYSIS"}
+                      </span>
+                    </div>
+
+                    {/* Fluid Gradient Flow on Hover */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-blue-400/0 via-blue-400/10 to-purple-400/0 opacity-0 group-hover:opacity-100 translate-x-[-100%] group-hover:translate-x-[100%] transition-all duration-[1s] ease-in-out pointer-events-none" />
                   </button>
                 </div>
               </form>
@@ -230,17 +250,6 @@ export function Summarize() {
               </motion.div>
               <ProcessingTerminal status={status} />
             </div>
-          )}
-
-          {error && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex items-center justify-center gap-3 text-sm text-red-400 bg-red-500/5 border border-red-500/10 rounded-2xl px-6 py-4 max-w-2xl mx-auto shadow-2xl"
-            >
-              <AlertCircle className="w-5 h-5 shrink-0" />
-              {error}
-            </motion.div>
           )}
 
           <p className="text-[10px] text-gray-700 mt-20 md:mt-8 font-bold uppercase tracking-widest opacity-30">

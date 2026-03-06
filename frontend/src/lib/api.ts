@@ -17,6 +17,7 @@ export interface ProcessVideoResponse {
   description: string;
   status: string;
   chunk_count: number;
+  error_message?: string;
 }
 
 export interface ChatResponse {
@@ -56,6 +57,7 @@ export interface CleanupResponse {
   removed_summary_entries: number;
   removed_starter_entries: number;
   removed_persisted_indexes: number;
+  removed_transcript_caches: number;
   session_removed: boolean;
 }
 
@@ -89,8 +91,14 @@ async function apiFetch<T>(endpoint: string, body: Record<string, unknown>): Pro
 /**
  * Process a YouTube video — fetch transcript, create embeddings.
  */
-export async function processVideo(url: string): Promise<ProcessVideoResponse> {
-  return apiFetch<ProcessVideoResponse>("/api/process", { url });
+export async function processVideo(
+  url: string,
+  sessionId?: string
+): Promise<ProcessVideoResponse> {
+  return apiFetch<ProcessVideoResponse>("/api/process", {
+    url,
+    session_id: sessionId ?? null,
+  });
 }
 
 /**

@@ -267,8 +267,13 @@ export function Landing() {
             <a href="https://github.com/XynaxDev" target="_blank" rel="noreferrer" className="text-gray-400 hover:text-white transition-all hover:scale-110">
               <Github className="w-5 h-5" />
             </a>
-            <Link to="/dashboard" className="hidden sm:inline-flex bg-white text-black hover:bg-gray-100 text-[11px] font-bold uppercase tracking-widest px-5 py-2 rounded-full transition-all hover:shadow-[0_0_20px_rgba(255,255,255,0.2)]">
-              Launch App
+            <Link
+              to="/dashboard"
+              className="hidden sm:flex relative group px-6 h-9 items-center justify-center rounded-full transition-all duration-500 active:scale-95 bg-white text-black shadow-sm font-bold text-[10px] uppercase tracking-widest overflow-hidden"
+            >
+              <span className="relative z-10">Launch Hub</span>
+              {/* Fluid Gradient Flow on Hover */}
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-400/0 via-blue-400/20 to-purple-400/0 opacity-0 group-hover:opacity-100 translate-x-[-100%] group-hover:translate-x-[100%] transition-all duration-[1s] ease-in-out pointer-events-none" />
             </Link>
           </div>
         </motion.div>
@@ -300,13 +305,32 @@ export function Landing() {
             Stop watching hours of filler. ClipIQ uses advanced RAG to extract precise insights, compare tutorials, and pinpoint exact timestamps in seconds.
           </motion.p>
           <motion.div variants={fadeIn} className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link to="/dashboard" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-medium px-8 py-4 rounded-full flex items-center justify-center gap-2 transition-all hover:scale-105 active:scale-95 shadow-[0_0_30px_rgba(37,99,235,0.3)]">
-              Start Analyzing Free
-              <ArrowRight className="w-4 h-4" />
+            <Link
+              to="/dashboard"
+              className="group relative inline-flex items-center justify-center h-12 pl-1.5 pr-8 rounded-full bg-white text-black font-bold text-[13px] tracking-tight transition-all duration-500 hover:scale-[1.05] active:scale-95 shadow-[0_15px_30px_-10px_rgba(255,255,255,0.2)] overflow-hidden"
+            >
+              <div className="flex items-center gap-2 relative z-10">
+                <div className="w-9 h-9 rounded-full bg-blue-50/80 flex items-center justify-center group-hover:bg-blue-600 transition-all duration-500 shadow-sm border border-blue-100/20">
+                  <Sparkles className="w-4.5 h-4.5 text-blue-600 group-hover:text-white transition-colors" />
+                </div>
+                <span className="uppercase tracking-[0.05em] font-display text-[12px] font-bold">Try ClipIQ Free</span>
+                <ArrowRight className="w-4 h-4 transition-all duration-300 group-hover:translate-x-1 group-hover:text-blue-600" />
+              </div>
+
+              {/* Fluid Gradient Flow on Hover */}
+              <div className="absolute inset-0 bg-gradient-to-r from-blue-400/0 via-blue-400/20 to-purple-400/0 opacity-0 group-hover:opacity-100 translate-x-[-100%] group-hover:translate-x-[100%] transition-all duration-[1s] ease-in-out pointer-events-none" />
+
+              {/* Premium Inner Ring */}
+              <div className="absolute inset-0 rounded-full border border-black/[0.03] group-hover:border-blue-200/20 transition-colors" />
             </Link>
-            <a href="#how-it-works" className="w-full sm:w-auto bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium px-8 py-4 rounded-full transition-all flex items-center justify-center gap-2">
-              <Play className="w-4 h-4" />
-              See How It Works
+            <a
+              href="#how-it-works"
+              className="group relative inline-flex items-center justify-center h-12 px-8 rounded-full bg-white/[0.03] border border-white/10 text-white font-bold text-[11px] uppercase tracking-[0.15em] transition-all duration-300 hover:bg-white/5 hover:border-white/20 active:scale-95"
+            >
+              <div className="flex items-center gap-2.5">
+                <Play className="w-3.5 h-3.5 transition-transform group-hover:scale-110 group-hover:text-blue-400" />
+                <span>See How It Works</span>
+              </div>
             </a>
           </motion.div>
 
@@ -617,9 +641,18 @@ export function Landing() {
             variants={fadeIn}
           >
             <h2 className="text-5xl md:text-6xl font-bold mb-8 font-serif italic tracking-tight italic">Ready to upgrade your learning?</h2>
-            <Link to="/dashboard" className="inline-flex items-center justify-center gap-2 bg-white text-black hover:bg-gray-100 font-semibold px-10 py-5 rounded-full text-lg transition-all hover:scale-105 active:scale-95 shadow-[0_0_40px_rgba(255,255,255,0.2)]">
-              Launch ClipIQ Now
-              <ArrowRight className="w-5 h-5" />
+            <Link to="/dashboard" className="inline-flex items-center justify-center">
+              <button className="relative group px-10 py-5 rounded-full font-bold text-lg bg-white text-black overflow-hidden transition-all duration-500 hover:scale-[1.05] active:scale-95 shadow-[0_20px_50px_-10px_rgba(255,255,255,0.15)]">
+                <div className="flex items-center gap-3 relative z-10">
+                  <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center group-hover:bg-blue-600 transition-colors duration-500">
+                    <Rocket className="w-5 h-5 text-blue-600 group-hover:text-white transition-colors" />
+                  </div>
+                  <span className="font-display tracking-tight text-xl italic font-serif">Go to ClipIQ Hub</span>
+                  <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+                </div>
+                {/* Gradient Flow */}
+                <div className="absolute inset-0 bg-gradient-to-r from-blue-400/0 via-blue-400/20 to-purple-400/0 opacity-0 group-hover:opacity-100 translate-x-[-100%] group-hover:translate-x-[100%] transition-all duration-[1s] ease-in-out pointer-events-none" />
+              </button>
             </Link>
           </motion.div>
         </section>

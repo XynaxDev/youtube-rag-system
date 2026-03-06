@@ -23,11 +23,22 @@ const itemAnim = {
 function getCleanupPayload(item: HistoryItem): { sessionId: string | null; videoUrls: string[] } {
     const result = item?.result || {};
     const sessionId = result.sessionId || result.session_id || null;
-    const urls = [
+    const candidates = [
         result.videoUrl,
+        result.video_url,
         result.url1,
         result.url2,
-    ].filter((u: unknown) => typeof u === "string" && (u as string).trim().length > 0) as string[];
+        result.videoId,
+        result.video_id,
+        result.video_info?.video_id,
+        result.video_a?.video_id,
+        result.video_b?.video_id,
+    ];
+    const urls = [...new Set(
+        candidates
+            .filter((u: unknown) => typeof u === "string" && (u as string).trim().length > 0)
+            .map((u: unknown) => String(u).trim())
+    )];
     return { sessionId, videoUrls: urls };
 }
 

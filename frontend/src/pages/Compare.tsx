@@ -144,23 +144,23 @@ export function Compare() {
       setStatus("Processing stream A");
       const procA = await processVideo(cleanUrl1);
       setStatus("Processing stream B");
-      const procB = await processVideo(cleanUrl2);
+      const procB = await processVideo(cleanUrl2, procA.session_id);
       let effectiveStudyMode = studyModeEnabled;
-      if (studyModeEnabled) {
-        setStatus("Validating study mode");
-        const technicalCheck = await checkTechnicalVideos(
-          procA.session_id,
-          cleanUrl1,
-          cleanUrl2
-        );
-        if (!technicalCheck.is_technical) {
-          effectiveStudyMode = false;
-          setStudyModeEnabled(false);
-          showToast(
-            "Study Mode auto-disabled for this pair. Continuing in normal compare mode.",
-            "warning"
-          );
-        }
+      // Do not block or auto-disable when study mode is explicitly enabled by the user.
+      // When study mode is OFF, run a lightweight background check and suggest enabling it.
+      if (!studyModeEnabled) {
+        checkTechnicalVideos(procA.session_id, cleanUrl1, cleanUrl2)
+          .then((technicalCheck) => {
+            if (technicalCheck.is_technical) {
+              showToast(
+                "Technical content detected. You can enable Study Mode for deeper analysis.",
+                "info"
+              );
+            }
+          })
+          .catch(() => {
+            // Non-blocking hint only; ignore check failures.
+          });
       }
       setStatus("Generating contrast map");
 
@@ -245,39 +245,39 @@ export function Compare() {
               </div>
 
               <form onSubmit={handleCompare} className="relative max-w-2xl mx-auto mt-8 md:mt-12 group px-4 md:px-0">
-                <div className="bg-[#0a0a0a] border border-white/10 rounded-[2rem] p-4 md:p-8 shadow-[0_64px_128px_-32px_rgba(0,0,0,0.8)] relative space-y-4 md:space-y-6">
-                  <div className="absolute inset-0 bg-blue-500/[0.02] rounded-[2rem] pointer-events-none" />
+                <div className="bg-[#0a0a0a] border border-white/5 rounded-[3rem] p-6 md:p-10 shadow-[0_64px_128px_-32px_rgba(0,0,0,0.8)] relative space-y-5 md:space-y-6">
+                  <div className="absolute inset-0 bg-blue-500/[0.01] rounded-[3rem] pointer-events-none" />
                   <div className="relative group/input">
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-700 group-focus-within/input:text-blue-500 transition-colors"><Link2 className="w-5 h-5" /></div>
-                    <input type="url" value={url1} onChange={(e) => setUrl1(e.target.value)} placeholder="Video A URL..." className="w-full bg-black/50 border border-white/10 rounded-2xl h-14 pl-12 pr-4 text-[15px] outline-none focus:border-blue-500/40 transition-all font-medium placeholder:text-gray-800" />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-bold text-gray-700 pointer-events-none uppercase tracking-widest">Base Stream</div>
+                    <div className="absolute left-5 top-1/2 -translate-y-1/2 text-white/40 group-focus-within/input:text-blue-400 transition-colors z-10"><Link2 className="w-4 h-4" /></div>
+                    <input type="url" value={url1} onChange={(e) => setUrl1(e.target.value)} placeholder="Video A URL..." className="w-full bg-black/40 border border-white/5 rounded-full h-14 pl-14 pr-6 text-[14px] outline-none focus:border-blue-500/30 transition-all font-medium placeholder:text-gray-800 backdrop-blur-sm" />
+                    <div className="absolute right-6 top-1/2 -translate-y-1/2 text-[8px] font-bold text-gray-700 pointer-events-none uppercase tracking-widest bg-white/5 px-3 py-1.5 rounded-full ring-1 ring-white/10">Base Stream</div>
                   </div>
                   <div className="relative group/input">
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-700 group-focus-within/input:text-purple-500 transition-colors"><Link2 className="w-5 h-5" /></div>
-                    <input type="url" value={url2} onChange={(e) => setUrl2(e.target.value)} placeholder="Video B URL..." className="w-full bg-black/50 border border-white/10 rounded-2xl h-14 pl-12 pr-4 text-[15px] outline-none focus:border-purple-500/40 transition-all font-medium placeholder:text-gray-800" />
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[9px] font-bold text-gray-700 pointer-events-none uppercase tracking-widest">Target Stream</div>
+                    <div className="absolute left-5 top-1/2 -translate-y-1/2 text-white/40 group-focus-within/input:text-purple-400 transition-colors z-10"><Link2 className="w-4 h-4" /></div>
+                    <input type="url" value={url2} onChange={(e) => setUrl2(e.target.value)} placeholder="Video B URL..." className="w-full bg-black/40 border border-white/5 rounded-full h-14 pl-14 pr-6 text-[14px] outline-none focus:border-purple-500/30 transition-all font-medium placeholder:text-gray-800 backdrop-blur-sm" />
+                    <div className="absolute right-6 top-1/2 -translate-y-1/2 text-[8px] font-bold text-gray-700 pointer-events-none uppercase tracking-widest bg-white/5 px-3 py-1.5 rounded-full ring-1 ring-white/10">Target Stream</div>
                   </div>
                   <div className="pt-2 space-y-2">
                     <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 md:gap-3 w-full">
-                      <div className="w-full md:w-fit h-10 md:h-12 px-3 md:px-3.5 rounded-xl md:rounded-[1rem] border border-white/10 bg-white/5 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-1.5 md:gap-2">
+                      <div className="w-full md:w-fit h-10 md:h-12 px-5 rounded-full border border-white/5 bg-white/[0.03] flex items-center justify-between gap-6 backdrop-blur-md shadow-inner">
+                        <div className="flex items-center gap-3">
                           <FlaskConical className={cn("w-3.5 h-3.5", studyModeEnabled ? "text-green-400" : "text-blue-400")} />
-                          <span className="text-[9px] md:text-[10px] font-sans font-semibold uppercase tracking-[0.18em] text-gray-400">
-                            Study Mode
+                          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-500">
+                            Deep Study Mode
                           </span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3">
                           <div
-                            className="relative"
+                            className="relative flex items-center"
                             onMouseEnter={() => setIsStudyHintOpen(true)}
                             onMouseLeave={() => setIsStudyHintOpen(false)}
                           >
                             <button
                               type="button"
                               aria-label="Study mode info"
-                              className="w-7 h-7 rounded-lg border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:border-white/20 transition-all flex items-center justify-center"
+                              className="w-7 h-7 rounded-full border border-white/10 bg-white/5 text-gray-400 hover:text-white hover:border-white/20 transition-all flex items-center justify-center group/info"
                             >
-                              <Info className="w-3.5 h-3.5" />
+                              <Info className="w-3.5 h-3.5 transition-transform group-hover/info:scale-110" />
                             </button>
                             <div className={cn(
                               "absolute top-full mt-2 right-0 w-[240px] sm:w-[300px] md:w-[380px] max-w-[calc(100vw-1rem)] rounded-2xl border border-white/15 bg-[#101219]/95 backdrop-blur-xl p-4 text-left shadow-2xl z-30 transition-all duration-200",
@@ -319,14 +319,30 @@ export function Compare() {
                         type="submit"
                         disabled={!url1.trim() || !url2.trim() || isComparing}
                         className={cn(
-                          "w-full md:w-auto md:ml-auto px-6 h-10 md:h-12 md:px-8 rounded-xl md:rounded-[1rem] font-bold text-[10px] md:text-[11px] tracking-widest uppercase transition-all whitespace-nowrap inline-flex items-center justify-center gap-3",
-                          url1.trim() && url2.trim()
-                            ? "bg-white text-black hover:bg-gray-100 shadow-xl active:scale-[0.98]"
-                            : "bg-white/5 text-gray-700 cursor-not-allowed"
+                          "w-full md:w-auto md:ml-auto relative group h-10 md:h-12 pl-2 pr-8 rounded-full transition-all duration-500 active:scale-[0.97] overflow-hidden",
+                          url1.trim() && url2.trim() && !isComparing
+                            ? "bg-[#0a0a0a] text-white shadow-[0_10px_30px_-10px_rgba(0,0,0,0.5),0_0_0_1px_rgba(255,255,255,0.05)_inset]"
+                            : "bg-white/5 text-gray-700 cursor-not-allowed border border-white/5"
                         )}
                       >
-                        <Scale className="w-4 h-4" />
-                        Generate
+                        <div className="relative z-10 flex items-center justify-center gap-2">
+                          <div className={cn(
+                            "w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all duration-500 bg-white/5 ring-1 ring-white/10 group-hover:bg-indigo-600 group-hover:ring-indigo-400",
+                            !url1.trim() || !url2.trim() ? "opacity-50" : ""
+                          )}>
+                            {isComparing ? (
+                              <Loader2 className="w-4 h-4 animate-spin text-white/50" />
+                            ) : (
+                              <Scale className={cn("w-3.5 h-3.5 transition-colors", url1.trim() && url2.trim() ? "text-indigo-400 group-hover:text-white" : "text-gray-800")} />
+                            )}
+                          </div>
+                          <span className="text-[11px] font-bold tracking-[0.1em] uppercase font-display">
+                            {isComparing ? "COMPARING..." : "RELATIONAL COMPARE"}
+                          </span>
+                        </div>
+
+                        {/* Premium Gradient Flow BG on Hover */}
+                        <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/0 via-indigo-500/10 to-purple-500/0 opacity-0 group-hover:opacity-100 translate-x-[-100%] group-hover:translate-x-[100%] transition-all duration-[1s] ease-in-out pointer-events-none" />
                       </button>
                     </div>
                     <div className="text-[10px] text-gray-600 font-bold uppercase tracking-widest flex items-center justify-center gap-2">
