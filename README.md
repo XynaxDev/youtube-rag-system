@@ -19,7 +19,6 @@
 <p align="center">
   <img src="frontend/public/landingpage.png" alt="ClipIQ landing placeholder" />
 </p>
-<p align="center"><em>Landing page visual placeholder (asset from <code>frontend/public</code>)</em></p>
 
 ## What ClipIQ Does
 ClipIQ transforms long YouTube videos into verifiable intelligence:
